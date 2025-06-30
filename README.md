@@ -173,7 +173,7 @@ This project is licensed under the [Creative Commons Attribution-NonCommercial-S
 
 If you encounter any issues or have questions:
 
-1. Check the [Issues](https://github.com/yourusername/camera-management-system/issues) page
+1. Check the [Issues](https://github.com/THET1TAN/camera-management-system/issues) page
 2. Create a new issue with detailed information
 3. Include system information and error logs
 
@@ -181,7 +181,7 @@ If you encounter any issues or have questions:
 
 - **Author**: Joël Smith-Gravel
 - **Email**: joel.smith-gravel@hotmail.com
-- **GitHub**: [@yourusername](https://github.com/yourusername)
+- **GitHub**: [@THET1TAN](https://github.com/THET1TAN)
 
 ---
 
