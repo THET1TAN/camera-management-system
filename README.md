@@ -180,7 +180,7 @@ If you encounter any issues or have questions:
 ## 📞 Contact
 
 - **Author**: Joël Smith-Gravel
-- **Email**: joel.smith-gravel@hotmail.com
+- **Email**: joel.smith-gravel@hotmail.ca
 - **GitHub**: [@THET1TAN](https://github.com/THET1TAN)
 
 ---
