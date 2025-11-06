@@ -14,6 +14,11 @@ import argparse
 from collections import deque
 
 class VideoStream:
+    # Display monitoring constants
+    VOUT_CHECK_INTERVAL = 5  # Check every 5 seconds
+    VOUT_TIMEOUT_THRESHOLD = 10  # Consider display lost after 10 seconds without vout
+    VOUT_RECOVERY_CYCLES = 2  # Number of consecutive cycles before triggering recovery
+    
     def __init__(self, stream_uri, instance_params=None):
         if instance_params is None:
             instance_params = [
@@ -91,17 +96,16 @@ class VideoStream:
         processing. This method detects this condition and triggers display recovery.
         
         Detection logic:
-        - Checks every 5 seconds if vout events are still occurring
-        - If vout_count hasn't changed AND >10 seconds have passed since last vout
-        - After 2 consecutive cycles (10 seconds total) without vout updates
+        - Checks every VOUT_CHECK_INTERVAL seconds if vout events are still occurring
+        - If vout_count hasn't changed AND >VOUT_TIMEOUT_THRESHOLD seconds have passed
+        - After VOUT_RECOVERY_CYCLES consecutive cycles without vout updates
         - Triggers recovery by calling the callback and posting to status queue
         """
-        vout_check_interval = 5  # Check every 5 seconds
         last_vout_count = 0
         no_vout_cycles = 0
         
         while self.running:
-            time.sleep(vout_check_interval)
+            time.sleep(self.VOUT_CHECK_INTERVAL)
             
             state = self.player.get_state()
             
@@ -115,17 +119,18 @@ class VideoStream:
             vout_time_since_last = time.time() - self._last_vout_time
             
             # If vout count hasn't changed and stream is playing, display may be lost
-            if current_vout_count == last_vout_count and vout_time_since_last > 10:
+            if current_vout_count == last_vout_count and vout_time_since_last > self.VOUT_TIMEOUT_THRESHOLD:
                 no_vout_cycles += 1
                 
-                # After 2 consecutive cycles (10 seconds) of no vout updates, trigger recovery
-                if no_vout_cycles >= 2:
+                # After VOUT_RECOVERY_CYCLES consecutive cycles of no vout updates, trigger recovery
+                if no_vout_cycles >= self.VOUT_RECOVERY_CYCLES:
                     self.status_queue.put("display-recovery-needed")
                     if self._display_recovery_callback:
                         try:
                             self._display_recovery_callback()
                         except Exception as e:
-                            print(f"Display recovery callback error: {e}")
+                            print(f"[VideoStream] Display recovery callback error after {no_vout_cycles} cycles "
+                                  f"({vout_time_since_last:.1f}s since last vout): {e}")
                     no_vout_cycles = 0  # Reset after triggering recovery
             else:
                 no_vout_cycles = 0  # Reset if vout is working
@@ -411,17 +416,22 @@ class VideoPlayer:
     def _recover_display(self):
         """Recover video display by re-attaching to the window handle"""
         try:
-            print("Attempting to recover video display...")
+            print("[VideoPlayer] Attempting to recover video display...")
             # Re-attach the video player to the window handle
             if self.frame and self.video_stream.player:
                 hwnd = self.frame.winfo_id()
                 if hwnd:
                     self.video_stream.player.set_hwnd(hwnd)
-                    print(f"Display recovered: re-attached to hwnd {hwnd}")
+                    print(f"[VideoPlayer] Display recovered: re-attached to hwnd {hwnd}")
+                    # Reset vout tracking to restart monitoring
+                    self.video_stream._last_vout_time = time.time()
                 else:
-                    print("Warning: Could not get valid window handle")
+                    print("[VideoPlayer] Warning: Could not get valid window handle for recovery")
+            else:
+                print("[VideoPlayer] Warning: Frame or player not available for recovery")
         except Exception as e:
-            print(f"Error during display recovery: {e}")
+            state = self.video_stream.player.get_state() if self.video_stream and self.video_stream.player else "unknown"
+            print(f"[VideoPlayer] Error during display recovery (player state: {state}): {e}")
 
 
     def update_bitrate(self):
