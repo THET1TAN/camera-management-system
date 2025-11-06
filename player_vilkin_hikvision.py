@@ -83,7 +83,19 @@ class VideoStream:
         self.player.stop()
 
     def _monitor_display(self):
-        """Monitor video display and trigger recovery if display is lost"""
+        """Monitor video display and trigger recovery if display is lost
+        
+        This method runs in a separate thread and continuously monitors the video
+        output (vout) events. When graphics problems occur and the display context
+        is lost, vout events stop being generated even though the stream continues
+        processing. This method detects this condition and triggers display recovery.
+        
+        Detection logic:
+        - Checks every 5 seconds if vout events are still occurring
+        - If vout_count hasn't changed AND >10 seconds have passed since last vout
+        - After 2 consecutive cycles (10 seconds total) without vout updates
+        - Triggers recovery by calling the callback and posting to status queue
+        """
         vout_check_interval = 5  # Check every 5 seconds
         last_vout_count = 0
         no_vout_cycles = 0
