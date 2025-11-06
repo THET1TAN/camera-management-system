@@ -1,4 +1,4 @@
-# V0.2.4
+# V0.2.5
 
 import os
 from queue import Queue, Empty
@@ -46,22 +46,79 @@ class VideoStream:
         self._restart_attempt = 0  # Compteur de tentatives de redémarrage
         self._max_restart_delay = 30  # Délai maximum entre les tentatives (en secondes)
         
+        # Display recovery mechanism
+        self._last_vout_count = 0
+        self._last_vout_time = time.time()
+        self._display_recovery_callback = None
+        
         # Event handler pour les frames
         self.player.event_manager().event_attach(vlc.EventType.MediaPlayerTimeChanged, 
                                                lambda _: self._increment_frame())
+        
+        # Event handler for video output (vout) to detect display loss
+        self.player.event_manager().event_attach(vlc.EventType.MediaPlayerVout,
+                                               lambda _: self._on_vout_event())
     
     def _increment_frame(self):
         self._frame_count += 1
+
+    def _on_vout_event(self):
+        """Called when video output event occurs"""
+        self._last_vout_count += 1
+        self._last_vout_time = time.time()
+
+    def set_display_recovery_callback(self, callback):
+        """Set callback to be called when display needs recovery"""
+        self._display_recovery_callback = callback
 
     def start(self):
         self.running = True
         self.player.play()
         self.player.audio_set_mute(self.is_muted)
         threading.Thread(target=self._monitor_stream, daemon=True).start()
+        threading.Thread(target=self._monitor_display, daemon=True).start()
 
     def stop(self):
         self.running = False
         self.player.stop()
+
+    def _monitor_display(self):
+        """Monitor video display and trigger recovery if display is lost"""
+        vout_check_interval = 5  # Check every 5 seconds
+        last_vout_count = 0
+        no_vout_cycles = 0
+        
+        while self.running:
+            time.sleep(vout_check_interval)
+            
+            state = self.player.get_state()
+            
+            # Only monitor when player is playing
+            if state != vlc.State.Playing:
+                no_vout_cycles = 0
+                continue
+            
+            # Check if vout events are still being received
+            current_vout_count = self._last_vout_count
+            vout_time_since_last = time.time() - self._last_vout_time
+            
+            # If vout count hasn't changed and stream is playing, display may be lost
+            if current_vout_count == last_vout_count and vout_time_since_last > 10:
+                no_vout_cycles += 1
+                
+                # After 2 consecutive cycles (10 seconds) of no vout updates, trigger recovery
+                if no_vout_cycles >= 2:
+                    self.status_queue.put("display-recovery-needed")
+                    if self._display_recovery_callback:
+                        try:
+                            self._display_recovery_callback()
+                        except Exception as e:
+                            print(f"Display recovery callback error: {e}")
+                    no_vout_cycles = 0  # Reset after triggering recovery
+            else:
+                no_vout_cycles = 0  # Reset if vout is working
+                
+            last_vout_count = current_vout_count
 
     def _monitor_stream(self):
         last_bitrate_ts = time.time()
@@ -199,6 +256,7 @@ class VideoPlayer:
         ]
         
         self.video_stream = VideoStream(self.stream_uri, vlc_params)
+        self.video_stream.set_display_recovery_callback(self._recover_display)
         self.setup_gui()
 
     def _get_stream_uri(self, camera_ip, username, password):
@@ -330,10 +388,29 @@ class VideoPlayer:
             msg = self.video_stream.status_queue.get_nowait()
             if msg == "restart":
                 print("Stream frozen, restarting...")  # Changed from "Flux figé, redémarrage..."
+            elif msg == "display-recovery-needed":
+                print("Display recovery triggered from queue")
+                self._recover_display()
         except Empty:
             pass
         finally:
             self.root.after(2000, self.check_stream_status)
+
+    def _recover_display(self):
+        """Recover video display by re-attaching to the window handle"""
+        try:
+            print("Attempting to recover video display...")
+            # Re-attach the video player to the window handle
+            if self.frame and self.video_stream.player:
+                hwnd = self.frame.winfo_id()
+                if hwnd:
+                    self.video_stream.player.set_hwnd(hwnd)
+                    print(f"Display recovered: re-attached to hwnd {hwnd}")
+                else:
+                    print("Warning: Could not get valid window handle")
+        except Exception as e:
+            print(f"Error during display recovery: {e}")
+
 
     def update_bitrate(self):
         try:
