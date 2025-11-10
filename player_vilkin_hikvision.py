@@ -1,4 +1,4 @@
-# V0.2.6
+# V0.2.7
 
 import os
 from queue import Queue, Empty
@@ -57,6 +57,10 @@ class VideoStream:
         self._display_recovery_callback = None
         self._error_detected = False
         self._es_deleted_detected = False
+        self._recovery_in_progress = False
+        self._last_recovery_time = 0
+        self._recovery_cooldown = 5  # Minimum 5 seconds between recovery attempts
+        self._player_started = False  # Track if player has successfully started
         
         # Event handler pour les frames
         self.player.event_manager().event_attach(vlc.EventType.MediaPlayerTimeChanged, 
@@ -73,6 +77,10 @@ class VideoStream:
         # Event handler for elementary stream deletion (video stream lost)
         self.player.event_manager().event_attach(vlc.EventType.MediaPlayerESDeleted,
                                                lambda event: self._on_es_deleted_event(event))
+        
+        # Event handler for player playing state (mark as started)
+        self.player.event_manager().event_attach(vlc.EventType.MediaPlayerPlaying,
+                                               lambda _: self._on_playing_event())
     
     def _increment_frame(self):
         self._frame_count += 1
@@ -82,9 +90,29 @@ class VideoStream:
         self._last_vout_count += 1
         self._last_vout_time = time.time()
 
+    def _on_playing_event(self):
+        """Called when player enters Playing state"""
+        self._player_started = True
+        print("[VideoStream] Player started successfully")
+
     def _on_error_event(self):
         """Called when VLC player encounters an error (e.g., DirectX device lost)"""
+        # Only trigger recovery if player has started and cooldown has passed
+        if not self._player_started:
+            print("[VideoStream] VLC error during startup - ignoring")
+            return
+            
+        if self._recovery_in_progress:
+            print("[VideoStream] Recovery already in progress - ignoring error")
+            return
+            
+        current_time = time.time()
+        if current_time - self._last_recovery_time < self._recovery_cooldown:
+            print(f"[VideoStream] Recovery cooldown active - ignoring error")
+            return
+        
         self._error_detected = True
+        self._last_recovery_time = current_time
         print("[VideoStream] VLC error detected - triggering display recovery")
         self.status_queue.put("display-recovery-needed")
         if self._display_recovery_callback:
@@ -95,7 +123,22 @@ class VideoStream:
 
     def _on_es_deleted_event(self, event):
         """Called when elementary stream (video/audio) is deleted"""
+        # Only trigger recovery if player has started and cooldown has passed
+        if not self._player_started:
+            print("[VideoStream] ES deleted during startup - ignoring")
+            return
+            
+        if self._recovery_in_progress:
+            print("[VideoStream] Recovery already in progress - ignoring ES deletion")
+            return
+            
+        current_time = time.time()
+        if current_time - self._last_recovery_time < self._recovery_cooldown:
+            print(f"[VideoStream] Recovery cooldown active - ignoring ES deletion")
+            return
+        
         self._es_deleted_detected = True
+        self._last_recovery_time = current_time
         print("[VideoStream] Elementary stream deleted - triggering display recovery")
         self.status_queue.put("display-recovery-needed")
         if self._display_recovery_callback:
@@ -464,7 +507,13 @@ class VideoPlayer:
         4. Re-attach to window handle
         5. Resume playback
         """
+        # Prevent concurrent recovery attempts
+        if self.video_stream._recovery_in_progress:
+            print("[VideoPlayer] Recovery already in progress - skipping")
+            return
+            
         try:
+            self.video_stream._recovery_in_progress = True
             print("[VideoPlayer] Attempting to recover video display after graphics device loss...")
             
             if not self.frame or not self.video_stream:
@@ -506,6 +555,10 @@ class VideoPlayer:
                 vlc.EventType.MediaPlayerESDeleted,
                 lambda event: self.video_stream._on_es_deleted_event(event)
             )
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerPlaying,
+                lambda _: self.video_stream._on_playing_event()
+            )
             
             # Set media and attach to window
             self.video_stream.player.set_media(self.video_stream.media)
@@ -527,6 +580,7 @@ class VideoPlayer:
             self.video_stream._es_deleted_detected = False
             self.video_stream._last_vout_time = time.time()
             self.video_stream._last_vout_count = 0
+            self.video_stream._player_started = False  # Will be set to True by Playing event
             
             print("[VideoPlayer] Display recovery completed successfully")
             
@@ -535,6 +589,9 @@ class VideoPlayer:
             print(f"[VideoPlayer] Error during display recovery (player state: {state}): {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            # Always reset recovery flag
+            self.video_stream._recovery_in_progress = False
 
 
     def update_bitrate(self):
