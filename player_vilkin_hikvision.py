@@ -1,4 +1,4 @@
-# V0.2.9
+# V0.3.0
 
 import os
 from queue import Queue, Empty
@@ -176,63 +176,26 @@ class VideoStream:
         self.player.stop()
 
     def _monitor_display(self):
-        """Monitor video display and trigger recovery if display is lost
+        """Monitor video display for error/ES deletion events
         
-        This method runs in a separate thread and continuously monitors the video
-        output (vout) events. When graphics problems occur and the display context
-        is lost, vout events stop being generated even though the stream continues
-        processing. This method detects this condition and triggers display recovery.
+        This method runs in a separate thread and monitors for display issues.
+        It no longer uses vout monitoring as that caused too many false positives.
+        Recovery is only triggered by actual VLC error events or ES deletion events
+        after the grace period.
         
         Detection logic:
-        - Immediate recovery if error or ES deleted events detected
-        - Checks every VOUT_CHECK_INTERVAL seconds if vout events are still occurring
-        - If vout_count hasn't changed AND >VOUT_TIMEOUT_THRESHOLD seconds have passed
-        - After VOUT_RECOVERY_CYCLES consecutive cycles without vout updates
-        - Triggers recovery by calling the callback and posting to status queue
+        - Only monitors error and ES deleted flags
+        - Vout monitoring disabled (too many false positives during normal operation)
+        - Real DirectX errors are caught by MediaPlayerEncounteredError events
         """
-        last_vout_count = 0
-        no_vout_cycles = 0
-        
         while self.running:
             time.sleep(self.VOUT_CHECK_INTERVAL)
             
-            state = self.player.get_state()
-            
-            # Check for immediate recovery triggers (error or ES deleted)
+            # Only monitor error flags for logging purposes
             if self._error_detected or self._es_deleted_detected:
                 print(f"[VideoStream] Display issue detected - error: {self._error_detected}, ES deleted: {self._es_deleted_detected}")
-                # Reset flags - recovery will be triggered by event handlers
-                no_vout_cycles = 0
-                continue
-            
-            # Only monitor when player is playing
-            if state != vlc.State.Playing:
-                no_vout_cycles = 0
-                continue
-            
-            # Check if vout events are still being received
-            current_vout_count = self._last_vout_count
-            vout_time_since_last = time.time() - self._last_vout_time
-            
-            # If vout count hasn't changed and stream is playing, display may be lost
-            if current_vout_count == last_vout_count and vout_time_since_last > self.VOUT_TIMEOUT_THRESHOLD:
-                no_vout_cycles += 1
-                
-                # After VOUT_RECOVERY_CYCLES consecutive cycles of no vout updates, trigger recovery
-                if no_vout_cycles >= self.VOUT_RECOVERY_CYCLES:
-                    print(f"[VideoStream] No vout updates for {vout_time_since_last:.1f}s - triggering recovery")
-                    self.status_queue.put("display-recovery-needed")
-                    if self._display_recovery_callback:
-                        try:
-                            self._display_recovery_callback()
-                        except Exception as e:
-                            print(f"[VideoStream] Display recovery callback error after {no_vout_cycles} cycles "
-                                  f"({vout_time_since_last:.1f}s since last vout): {e}")
-                    no_vout_cycles = 0  # Reset after triggering recovery
-            else:
-                no_vout_cycles = 0  # Reset if vout is working
-                
-            last_vout_count = current_vout_count
+                # Recovery will be triggered by event handlers, not here
+                # Just log for debugging
 
     def _monitor_stream(self):
         last_bitrate_ts = time.time()
