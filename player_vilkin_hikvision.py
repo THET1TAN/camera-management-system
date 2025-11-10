@@ -1,4 +1,4 @@
-# V0.2.7
+# V0.2.8
 
 import os
 from queue import Queue, Empty
@@ -528,9 +528,9 @@ class VideoPlayer:
             self.video_stream.player.stop()
             time.sleep(0.5)  # Give time for stop to complete
             
-            # Release video output
+            # Release video output (use 0 instead of None for VLC compatibility)
             print("[VideoPlayer] Releasing video output...")
-            self.video_stream.player.set_hwnd(None)
+            self.video_stream.player.set_hwnd(0)
             time.sleep(0.5)
             
             # Create new media player instance
