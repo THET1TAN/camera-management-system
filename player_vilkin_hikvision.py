@@ -1,4 +1,4 @@
-# V0.2.8
+# V0.2.9
 
 import os
 from queue import Queue, Empty
@@ -16,7 +16,7 @@ from collections import deque
 class VideoStream:
     # Display monitoring constants
     VOUT_CHECK_INTERVAL = 5  # Check every 5 seconds
-    VOUT_TIMEOUT_THRESHOLD = 10  # Consider display lost after 10 seconds without vout
+    VOUT_TIMEOUT_THRESHOLD = 30  # Consider display lost after 30 seconds without vout (allows codec init)
     VOUT_RECOVERY_CYCLES = 2  # Number of consecutive cycles before triggering recovery
     
     def __init__(self, stream_uri, instance_params=None):
@@ -59,8 +59,9 @@ class VideoStream:
         self._es_deleted_detected = False
         self._recovery_in_progress = False
         self._last_recovery_time = 0
-        self._recovery_cooldown = 5  # Minimum 5 seconds between recovery attempts
+        self._recovery_cooldown = 15  # Minimum 15 seconds between recovery attempts (increased from 5)
         self._player_started = False  # Track if player has successfully started
+        self._player_start_time = 0  # Track when player started playing
         
         # Event handler pour les frames
         self.player.event_manager().event_attach(vlc.EventType.MediaPlayerTimeChanged, 
@@ -93,6 +94,7 @@ class VideoStream:
     def _on_playing_event(self):
         """Called when player enters Playing state"""
         self._player_started = True
+        self._player_start_time = time.time()
         print("[VideoStream] Player started successfully")
 
     def _on_error_event(self):
@@ -122,17 +124,28 @@ class VideoStream:
                 print(f"[VideoStream] Error callback failed: {e}")
 
     def _on_es_deleted_event(self, event):
-        """Called when elementary stream (video/audio) is deleted"""
+        """Called when elementary stream (video/audio) is deleted
+        
+        ES deletion can occur during normal operation (codec changes, stream switches).
+        Only trigger recovery if it happens after player has been stable for a while.
+        """
         # Only trigger recovery if player has started and cooldown has passed
         if not self._player_started:
             print("[VideoStream] ES deleted during startup - ignoring")
+            return
+            
+        # Grace period: ignore ES deletion for 30 seconds after player starts
+        # This allows codec initialization and stream setup to complete
+        current_time = time.time()
+        time_since_start = current_time - self._player_start_time
+        if time_since_start < 30:
+            print(f"[VideoStream] ES deleted during grace period ({time_since_start:.1f}s since start) - ignoring")
             return
             
         if self._recovery_in_progress:
             print("[VideoStream] Recovery already in progress - ignoring ES deletion")
             return
             
-        current_time = time.time()
         if current_time - self._last_recovery_time < self._recovery_cooldown:
             print(f"[VideoStream] Recovery cooldown active - ignoring ES deletion")
             return
