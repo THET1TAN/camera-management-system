@@ -1,4 +1,4 @@
-# V0.3.0
+# V0.3.1
 
 import os
 from queue import Queue, Empty
@@ -16,8 +16,9 @@ from collections import deque
 class VideoStream:
     # Display monitoring constants
     VOUT_CHECK_INTERVAL = 5  # Check every 5 seconds
-    VOUT_TIMEOUT_THRESHOLD = 30  # Consider display lost after 30 seconds without vout (allows codec init)
-    VOUT_RECOVERY_CYCLES = 2  # Number of consecutive cycles before triggering recovery
+    VOUT_TIMEOUT_THRESHOLD = 60  # Consider display lost after 60 seconds without vout (very conservative)
+    VOUT_RECOVERY_CYCLES = 3  # Number of consecutive cycles before triggering recovery
+    MIN_VOUT_COUNT_FOR_MONITORING = 10  # Require at least 10 vout events before monitoring kicks in
     
     def __init__(self, stream_uri, instance_params=None):
         if instance_params is None:
@@ -176,26 +177,74 @@ class VideoStream:
         self.player.stop()
 
     def _monitor_display(self):
-        """Monitor video display for error/ES deletion events
+        """Monitor video display for error/ES deletion events and vout stagnation
         
         This method runs in a separate thread and monitors for display issues.
-        It no longer uses vout monitoring as that caused too many false positives.
-        Recovery is only triggered by actual VLC error events or ES deletion events
-        after the grace period.
+        Uses a hybrid approach:
+        1. Immediate recovery on MediaPlayerEncounteredError events
+        2. Immediate recovery on MediaPlayerESDeleted events (after grace period)
+        3. Backup vout monitoring for cases where VLC doesn't fire error events
         
-        Detection logic:
-        - Only monitors error and ES deleted flags
-        - Vout monitoring disabled (too many false positives during normal operation)
-        - Real DirectX errors are caught by MediaPlayerEncounteredError events
+        Vout monitoring is conservative:
+        - Only activates after player has been stable with vout events
+        - Requires 60+ seconds of no vout events
+        - Requires player to be in Playing state
+        - Avoids false positives during initialization and codec changes
         """
+        last_vout_count = 0
+        no_vout_cycles = 0
+        vout_monitoring_active = False
+        
         while self.running:
             time.sleep(self.VOUT_CHECK_INTERVAL)
             
-            # Only monitor error flags for logging purposes
+            # Monitor error flags for logging
             if self._error_detected or self._es_deleted_detected:
                 print(f"[VideoStream] Display issue detected - error: {self._error_detected}, ES deleted: {self._es_deleted_detected}")
-                # Recovery will be triggered by event handlers, not here
-                # Just log for debugging
+                # Recovery triggered by event handlers
+                no_vout_cycles = 0
+                continue
+            
+            # Check player state
+            state = self.player.get_state()
+            
+            # Only monitor vout when player is playing
+            if state != vlc.State.Playing:
+                no_vout_cycles = 0
+                vout_monitoring_active = False
+                continue
+            
+            # Check if player has been stable enough to enable vout monitoring
+            # Only monitor if we've seen enough vout events (video was working)
+            current_vout_count = self._last_vout_count
+            if current_vout_count >= self.MIN_VOUT_COUNT_FOR_MONITORING and not vout_monitoring_active:
+                vout_monitoring_active = True
+                print(f"[VideoStream] Vout monitoring activated (received {current_vout_count} vout events)")
+            
+            # Vout monitoring: detect when vout events stop after video was working
+            if vout_monitoring_active:
+                vout_time_since_last = time.time() - self._last_vout_time
+                
+                # Check if vout has stagnated
+                if current_vout_count == last_vout_count and vout_time_since_last > self.VOUT_TIMEOUT_THRESHOLD:
+                    no_vout_cycles += 1
+                    print(f"[VideoStream] Vout stagnation detected: {vout_time_since_last:.1f}s since last vout (cycle {no_vout_cycles}/{self.VOUT_RECOVERY_CYCLES})")
+                    
+                    # Trigger recovery after multiple consecutive cycles
+                    if no_vout_cycles >= self.VOUT_RECOVERY_CYCLES:
+                        print(f"[VideoStream] Vout timeout - no updates for {vout_time_since_last:.1f}s - triggering recovery")
+                        self.status_queue.put("display-recovery-needed")
+                        if self._display_recovery_callback:
+                            try:
+                                self._display_recovery_callback()
+                            except Exception as e:
+                                print(f"[VideoStream] Vout recovery callback error: {e}")
+                        no_vout_cycles = 0  # Reset after triggering
+                        vout_monitoring_active = False  # Will reactivate after recovery
+                else:
+                    no_vout_cycles = 0  # Reset if vout is working
+                
+                last_vout_count = current_vout_count
 
     def _monitor_stream(self):
         last_bitrate_ts = time.time()
