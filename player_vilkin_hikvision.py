@@ -1,4 +1,4 @@
-# V0.2.5
+# V0.2.6
 
 import os
 from queue import Queue, Empty
@@ -55,6 +55,8 @@ class VideoStream:
         self._last_vout_count = 0
         self._last_vout_time = time.time()
         self._display_recovery_callback = None
+        self._error_detected = False
+        self._es_deleted_detected = False
         
         # Event handler pour les frames
         self.player.event_manager().event_attach(vlc.EventType.MediaPlayerTimeChanged, 
@@ -63,6 +65,14 @@ class VideoStream:
         # Event handler for video output (vout) to detect display loss
         self.player.event_manager().event_attach(vlc.EventType.MediaPlayerVout,
                                                lambda _: self._on_vout_event())
+        
+        # Event handler for errors (graphics device lost)
+        self.player.event_manager().event_attach(vlc.EventType.MediaPlayerEncounteredError,
+                                               lambda _: self._on_error_event())
+        
+        # Event handler for elementary stream deletion (video stream lost)
+        self.player.event_manager().event_attach(vlc.EventType.MediaPlayerESDeleted,
+                                               lambda event: self._on_es_deleted_event(event))
     
     def _increment_frame(self):
         self._frame_count += 1
@@ -71,6 +81,28 @@ class VideoStream:
         """Called when video output event occurs"""
         self._last_vout_count += 1
         self._last_vout_time = time.time()
+
+    def _on_error_event(self):
+        """Called when VLC player encounters an error (e.g., DirectX device lost)"""
+        self._error_detected = True
+        print("[VideoStream] VLC error detected - triggering display recovery")
+        self.status_queue.put("display-recovery-needed")
+        if self._display_recovery_callback:
+            try:
+                self._display_recovery_callback()
+            except Exception as e:
+                print(f"[VideoStream] Error callback failed: {e}")
+
+    def _on_es_deleted_event(self, event):
+        """Called when elementary stream (video/audio) is deleted"""
+        self._es_deleted_detected = True
+        print("[VideoStream] Elementary stream deleted - triggering display recovery")
+        self.status_queue.put("display-recovery-needed")
+        if self._display_recovery_callback:
+            try:
+                self._display_recovery_callback()
+            except Exception as e:
+                print(f"[VideoStream] ES deleted callback failed: {e}")
 
     def set_display_recovery_callback(self, callback):
         """Set callback to be called when display needs recovery"""
@@ -96,6 +128,7 @@ class VideoStream:
         processing. This method detects this condition and triggers display recovery.
         
         Detection logic:
+        - Immediate recovery if error or ES deleted events detected
         - Checks every VOUT_CHECK_INTERVAL seconds if vout events are still occurring
         - If vout_count hasn't changed AND >VOUT_TIMEOUT_THRESHOLD seconds have passed
         - After VOUT_RECOVERY_CYCLES consecutive cycles without vout updates
@@ -108,6 +141,13 @@ class VideoStream:
             time.sleep(self.VOUT_CHECK_INTERVAL)
             
             state = self.player.get_state()
+            
+            # Check for immediate recovery triggers (error or ES deleted)
+            if self._error_detected or self._es_deleted_detected:
+                print(f"[VideoStream] Display issue detected - error: {self._error_detected}, ES deleted: {self._es_deleted_detected}")
+                # Reset flags - recovery will be triggered by event handlers
+                no_vout_cycles = 0
+                continue
             
             # Only monitor when player is playing
             if state != vlc.State.Playing:
@@ -124,6 +164,7 @@ class VideoStream:
                 
                 # After VOUT_RECOVERY_CYCLES consecutive cycles of no vout updates, trigger recovery
                 if no_vout_cycles >= self.VOUT_RECOVERY_CYCLES:
+                    print(f"[VideoStream] No vout updates for {vout_time_since_last:.1f}s - triggering recovery")
                     self.status_queue.put("display-recovery-needed")
                     if self._display_recovery_callback:
                         try:
@@ -414,24 +455,86 @@ class VideoPlayer:
             self.root.after(2000, self.check_stream_status)
 
     def _recover_display(self):
-        """Recover video display by re-attaching to the window handle"""
+        """Recover video display by recreating player after graphics device loss
+        
+        When DirectX encounters DXGI_ERROR_DEVICE_REMOVED, we need to:
+        1. Stop the current player
+        2. Release video output
+        3. Create a new media player instance
+        4. Re-attach to window handle
+        5. Resume playback
+        """
         try:
-            print("[VideoPlayer] Attempting to recover video display...")
-            # Re-attach the video player to the window handle
-            if self.frame and self.video_stream.player:
-                hwnd = self.frame.winfo_id()
-                if hwnd:
-                    self.video_stream.player.set_hwnd(hwnd)
-                    print(f"[VideoPlayer] Display recovered: re-attached to hwnd {hwnd}")
-                    # Reset vout tracking to restart monitoring
-                    self.video_stream._last_vout_time = time.time()
-                else:
-                    print("[VideoPlayer] Warning: Could not get valid window handle for recovery")
+            print("[VideoPlayer] Attempting to recover video display after graphics device loss...")
+            
+            if not self.frame or not self.video_stream:
+                print("[VideoPlayer] Warning: Frame or stream not available for recovery")
+                return
+            
+            # Get current state before stopping
+            was_muted = self.video_stream.is_muted
+            
+            # Stop current player
+            print("[VideoPlayer] Stopping current player...")
+            self.video_stream.player.stop()
+            time.sleep(0.5)  # Give time for stop to complete
+            
+            # Release video output
+            print("[VideoPlayer] Releasing video output...")
+            self.video_stream.player.set_hwnd(None)
+            time.sleep(0.5)
+            
+            # Create new media player instance
+            print("[VideoPlayer] Creating new media player...")
+            old_player = self.video_stream.player
+            self.video_stream.player = self.video_stream.instance.media_player_new()
+            
+            # Re-attach event handlers to new player
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerTimeChanged,
+                lambda _: self.video_stream._increment_frame()
+            )
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerVout,
+                lambda _: self.video_stream._on_vout_event()
+            )
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerEncounteredError,
+                lambda _: self.video_stream._on_error_event()
+            )
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerESDeleted,
+                lambda event: self.video_stream._on_es_deleted_event(event)
+            )
+            
+            # Set media and attach to window
+            self.video_stream.player.set_media(self.video_stream.media)
+            hwnd = self.frame.winfo_id()
+            if hwnd:
+                self.video_stream.player.set_hwnd(hwnd)
+                print(f"[VideoPlayer] Re-attached to hwnd {hwnd}")
             else:
-                print("[VideoPlayer] Warning: Frame or player not available for recovery")
+                print("[VideoPlayer] Warning: Could not get valid window handle")
+                return
+            
+            # Restart playback
+            print("[VideoPlayer] Restarting playback...")
+            self.video_stream.player.play()
+            self.video_stream.player.audio_set_mute(was_muted)
+            
+            # Reset error flags and vout tracking
+            self.video_stream._error_detected = False
+            self.video_stream._es_deleted_detected = False
+            self.video_stream._last_vout_time = time.time()
+            self.video_stream._last_vout_count = 0
+            
+            print("[VideoPlayer] Display recovery completed successfully")
+            
         except Exception as e:
             state = self.video_stream.player.get_state() if self.video_stream and self.video_stream.player else "unknown"
             print(f"[VideoPlayer] Error during display recovery (player state: {state}): {e}")
+            import traceback
+            traceback.print_exc()
 
 
     def update_bitrate(self):
