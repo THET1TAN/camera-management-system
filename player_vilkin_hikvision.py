@@ -1,4 +1,4 @@
-# V0.3.1
+# V0.3.2
 
 import os
 from queue import Queue, Empty
@@ -539,6 +539,11 @@ class VideoPlayer:
             
         try:
             self.video_stream._recovery_in_progress = True
+            
+            # Clear error flags BEFORE recovery to prevent re-triggering during the process
+            self.video_stream._error_detected = False
+            self.video_stream._es_deleted_detected = False
+            
             print("[VideoPlayer] Attempting to recover video display after graphics device loss...")
             
             if not self.frame or not self.video_stream:
@@ -600,9 +605,7 @@ class VideoPlayer:
             self.video_stream.player.play()
             self.video_stream.player.audio_set_mute(was_muted)
             
-            # Reset error flags and vout tracking
-            self.video_stream._error_detected = False
-            self.video_stream._es_deleted_detected = False
+            # Reset vout tracking
             self.video_stream._last_vout_time = time.time()
             self.video_stream._last_vout_count = 0
             self.video_stream._player_started = False  # Will be set to True by Playing event
