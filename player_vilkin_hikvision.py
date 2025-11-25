@@ -1,4 +1,4 @@
-# V0.3.3
+# V0.3.4
 
 import os
 import sys
@@ -15,6 +15,7 @@ import argparse
 from collections import deque
 import io
 import re
+import ctypes
 
 class VideoStream:
     # Display monitoring constants
@@ -699,28 +700,65 @@ class VideoPlayer:
             self.video_stream._recovery_in_progress = False
 
     def _start_stderr_monitor(self):
-        """Start a thread to monitor stderr for DirectX error messages from VLC
+        """Start a thread to monitor for DirectX error messages from VLC
         
         VLC outputs DirectX errors like 'SwapChain Present failed. (hr=0x887A0005)'
-        to stderr, but doesn't always fire MediaPlayerEncounteredError events.
-        This method redirects stderr and monitors for these error patterns.
-        """
-        # Store original stderr
-        self._original_stderr = sys.stderr
+        to the console via native code. Python stream redirection doesn't catch this.
         
-        # Create a custom stderr that monitors for DirectX errors
-        class StderrMonitor(io.TextIOBase):
-            def __init__(self, original_stderr, video_player):
-                self.original_stderr = original_stderr
+        This method uses VLC's log callback API to intercept VLC logs directly.
+        """
+        # Store original streams for backup Python output monitoring
+        self._original_stderr = sys.stderr
+        self._original_stdout = sys.stdout
+        
+        # Use VLC's native log callback API
+        # This is the reliable way to intercept VLC's internal logging
+        try:
+            # Define the log callback type
+            LogCb = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int, 
+                                      ctypes.c_void_p, ctypes.c_char_p)
+            
+            # Keep reference to prevent garbage collection
+            def log_callback(data, level, ctx, message):
+                try:
+                    if message:
+                        msg_str = message.decode('utf-8', errors='ignore')
+                        # Check for DirectX error patterns
+                        for pattern in VideoStream.DIRECTX_ERROR_PATTERNS:
+                            if pattern.lower() in msg_str.lower():
+                                self.video_stream.increment_directx_error()
+                                break
+                except Exception:
+                    pass
+            
+            self._log_callback = LogCb(log_callback)
+            
+            # Get libvlc from the instance
+            libvlc = ctypes.CDLL(vlc.dll._name if hasattr(vlc.dll, '_name') else 'libvlc.dll')
+            libvlc.libvlc_log_set.argtypes = [ctypes.c_void_p, LogCb, ctypes.c_void_p]
+            libvlc.libvlc_log_set.restype = None
+            
+            # Set the log callback
+            instance_ptr = self.video_stream.instance._as_parameter_
+            libvlc.libvlc_log_set(instance_ptr, self._log_callback, None)
+            print("[VideoPlayer] DirectX error monitoring via VLC log callback started")
+        except Exception as e:
+            print(f"[VideoPlayer] Could not set up VLC log callback: {e}")
+            # Fall back to Python stream monitoring
+            self._setup_fallback_monitoring()
+    
+    def _setup_fallback_monitoring(self):
+        """Fallback: monitor Python streams (won't catch native VLC output)"""
+        class StreamMonitor(io.TextIOBase):
+            def __init__(self, original_stream, video_player, stream_name):
+                self.original_stream = original_stream
                 self.video_player = video_player
+                self.stream_name = stream_name
                 self.directx_patterns = VideoStream.DIRECTX_ERROR_PATTERNS
                 
             def write(self, text):
-                # Always write to original stderr
-                if self.original_stderr:
-                    self.original_stderr.write(text)
-                
-                # Check for DirectX error patterns
+                if self.original_stream:
+                    self.original_stream.write(text)
                 if text and self.video_player.video_stream:
                     for pattern in self.directx_patterns:
                         if pattern.lower() in text.lower():
@@ -729,18 +767,30 @@ class VideoPlayer:
                 return len(text) if text else 0
             
             def flush(self):
-                if self.original_stderr:
-                    self.original_stderr.flush()
+                if self.original_stream:
+                    self.original_stream.flush()
+            
+            def fileno(self):
+                if self.original_stream:
+                    return self.original_stream.fileno()
+                raise io.UnsupportedOperation("fileno")
+            
+            def isatty(self):
+                if self.original_stream:
+                    return self.original_stream.isatty()
+                return False
         
-        # Replace stderr with our monitor
-        sys.stderr = StderrMonitor(self._original_stderr, self)
-        print("[VideoPlayer] DirectX error monitoring via stderr started")
+        sys.stderr = StreamMonitor(self._original_stderr, self, "stderr")
+        sys.stdout = StreamMonitor(self._original_stdout, self, "stdout")
+        print("[VideoPlayer] DirectX error monitoring via fallback stream monitor started")
 
     def _stop_stderr_monitor(self):
-        """Restore original stderr"""
+        """Restore original stdout and stderr"""
         if hasattr(self, '_original_stderr') and self._original_stderr:
             sys.stderr = self._original_stderr
-            print("[VideoPlayer] Stderr monitor stopped")
+        if hasattr(self, '_original_stdout') and self._original_stdout:
+            sys.stdout = self._original_stdout
+        print("[VideoPlayer] Stream monitors stopped")
 
 
     def update_bitrate(self):
