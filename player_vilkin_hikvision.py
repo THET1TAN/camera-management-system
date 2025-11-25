@@ -1,4 +1,4 @@
-# V0.3.5
+# V0.3.6
 
 import os
 import sys
@@ -17,6 +17,7 @@ import io
 import re
 import ctypes
 import tempfile
+import subprocess
 
 class VideoStream:
     # Display monitoring constants
@@ -711,27 +712,115 @@ class VideoPlayer:
             self.video_stream._recovery_in_progress = False
 
     def _start_directx_monitor(self):
-        """Start a thread to monitor for DirectX error messages from VLC
+        """Start monitoring for DirectX error messages from VLC
         
         VLC outputs DirectX errors like 'SwapChain Present failed. (hr=0x887A0005)'
-        to the console via native code. Python stream redirection doesn't catch this.
+        to stderr via native code. This uses multiple approaches:
         
-        This method uses multiple approaches:
-        1. VLC log file monitoring (most reliable)
-        2. VLC log callback API (if available)
+        1. Native stderr pipe capture (captures native C library output)
+        2. VLC log file monitoring (backup)
         """
         self._log_monitor_running = True
         self._last_log_position = 0
+        self._native_stderr_pipe = None
+        self._original_stderr_fd = None
         
-        # Start log file monitoring thread
+        # Try to set up native stderr capture (Windows only)
+        try:
+            if sys.platform == 'win32':
+                self._setup_native_stderr_capture()
+        except Exception as e:
+            print(f"[VideoPlayer] Native stderr capture failed: {e}")
+        
+        # Start log file monitoring as backup
         threading.Thread(target=self._monitor_vlc_log_file, daemon=True).start()
-        print(f"[VideoPlayer] DirectX error monitoring via log file started: {self._vlc_log_file}")
+        print(f"[VideoPlayer] DirectX error monitoring started (log file: {self._vlc_log_file})")
+    
+    def _setup_native_stderr_capture(self):
+        """Set up native stderr capture using OS-level pipe redirection
+        
+        This captures output from native C libraries like VLC's libvlc.
+        We create a pipe, duplicate the stderr file descriptor to the pipe,
+        and read from the pipe in a separate thread.
+        """
+        import msvcrt
+        
+        # Create a pipe for capturing stderr
+        read_fd, write_fd = os.pipe()
+        
+        # Save original stderr file descriptor
+        self._original_stderr_fd = os.dup(2)
+        
+        # Redirect stderr (fd 2) to our write end of the pipe
+        os.dup2(write_fd, 2)
+        os.close(write_fd)
+        
+        # Store read end for monitoring
+        self._stderr_read_fd = read_fd
+        
+        # Start thread to read from the pipe
+        threading.Thread(target=self._read_native_stderr, daemon=True).start()
+        print("[VideoPlayer] Native stderr capture initialized")
+    
+    def _read_native_stderr(self):
+        """Read from the native stderr pipe and check for DirectX errors"""
+        patterns = VideoStream.DIRECTX_ERROR_PATTERNS
+        buffer = ""
+        
+        while self._log_monitor_running and self._stderr_monitor_running:
+            try:
+                # Non-blocking read attempt
+                import select
+                if sys.platform == 'win32':
+                    # On Windows, use os.read with a timeout approach
+                    try:
+                        data = os.read(self._stderr_read_fd, 4096)
+                        if data:
+                            text = data.decode('utf-8', errors='ignore')
+                            buffer += text
+                            
+                            # Also write to original stderr so user sees output
+                            if self._original_stderr_fd:
+                                os.write(self._original_stderr_fd, data)
+                            
+                            # Process complete lines
+                            while '\n' in buffer:
+                                line, buffer = buffer.split('\n', 1)
+                                line_lower = line.lower()
+                                for pattern in patterns:
+                                    if pattern.lower() in line_lower:
+                                        if self.video_stream:
+                                            self.video_stream.increment_directx_error()
+                                        break
+                    except (OSError, BlockingIOError):
+                        pass
+                else:
+                    # On Unix, use select
+                    readable, _, _ = select.select([self._stderr_read_fd], [], [], 0.1)
+                    if readable:
+                        data = os.read(self._stderr_read_fd, 4096)
+                        if data:
+                            text = data.decode('utf-8', errors='ignore')
+                            buffer += text
+                            
+                            # Process complete lines
+                            while '\n' in buffer:
+                                line, buffer = buffer.split('\n', 1)
+                                line_lower = line.lower()
+                                for pattern in patterns:
+                                    if pattern.lower() in line_lower:
+                                        if self.video_stream:
+                                            self.video_stream.increment_directx_error()
+                                        break
+            except Exception as e:
+                pass
+            
+            time.sleep(0.1)
     
     def _monitor_vlc_log_file(self):
-        """Monitor VLC log file for DirectX error patterns
+        """Monitor VLC log file for DirectX error patterns (backup method)
         
-        This is the most reliable approach as VLC's --file-logging option
-        captures all internal VLC messages including DirectX errors.
+        This is a backup approach using VLC's --file-logging option.
         """
         patterns = VideoStream.DIRECTX_ERROR_PATTERNS
         
@@ -767,9 +856,20 @@ class VideoPlayer:
             time.sleep(0.5)  # Check log file every 500ms
     
     def _stop_directx_monitor(self):
-        """Stop DirectX monitoring"""
+        """Stop DirectX monitoring and restore stderr"""
         self._log_monitor_running = False
         self._stderr_monitor_running = False
+        
+        # Restore original stderr if we redirected it
+        try:
+            if hasattr(self, '_original_stderr_fd') and self._original_stderr_fd:
+                os.dup2(self._original_stderr_fd, 2)
+                os.close(self._original_stderr_fd)
+                self._original_stderr_fd = None
+            if hasattr(self, '_stderr_read_fd'):
+                os.close(self._stderr_read_fd)
+        except:
+            pass
         
         # Clean up log file
         try:
