@@ -1,6 +1,7 @@
-# V0.3.2
+# V0.3.3
 
 import os
+import sys
 from queue import Queue, Empty
 import threading
 import time
@@ -12,6 +13,8 @@ from PIL import Image, ImageTk
 from onvif import ONVIFCamera
 import argparse
 from collections import deque
+import io
+import re
 
 class VideoStream:
     # Display monitoring constants
@@ -19,6 +22,15 @@ class VideoStream:
     VOUT_TIMEOUT_THRESHOLD = 60  # Consider display lost after 60 seconds without vout (very conservative)
     VOUT_RECOVERY_CYCLES = 3  # Number of consecutive cycles before triggering recovery
     MIN_VOUT_COUNT_FOR_MONITORING = 10  # Require at least 10 vout events before monitoring kicks in
+    
+    # DirectX error detection - these errors indicate graphics device loss
+    DIRECTX_ERROR_PATTERNS = [
+        "SwapChain Present failed",
+        "0x887A0005",  # DXGI_ERROR_DEVICE_REMOVED
+        "DXGI_ERROR_DEVICE_REMOVED",
+        "direct3d11 vout display error"
+    ]
+    DIRECTX_ERROR_THRESHOLD = 5  # Number of consecutive errors before triggering recovery
     
     def __init__(self, stream_uri, instance_params=None):
         if instance_params is None:
@@ -63,6 +75,8 @@ class VideoStream:
         self._recovery_cooldown = 15  # Minimum 15 seconds between recovery attempts (increased from 5)
         self._player_started = False  # Track if player has successfully started
         self._player_start_time = 0  # Track when player started playing
+        self._directx_error_count = 0  # Track consecutive DirectX errors detected
+        self._last_log_position = 0  # Track position in VLC log file
         
         # Event handler pour les frames
         self.player.event_manager().event_attach(vlc.EventType.MediaPlayerTimeChanged, 
@@ -171,6 +185,7 @@ class VideoStream:
         self.player.audio_set_mute(self.is_muted)
         threading.Thread(target=self._monitor_stream, daemon=True).start()
         threading.Thread(target=self._monitor_display, daemon=True).start()
+        threading.Thread(target=self._monitor_directx_errors, daemon=True).start()
 
     def stop(self):
         self.running = False
@@ -245,6 +260,62 @@ class VideoStream:
                     no_vout_cycles = 0  # Reset if vout is working
                 
                 last_vout_count = current_vout_count
+
+    def _monitor_directx_errors(self):
+        """Monitor for DirectX errors by watching VLC log file and stderr
+        
+        This is a safety net for cases where VLC logs DirectX errors
+        (like DXGI_ERROR_DEVICE_REMOVED) to console but doesn't fire
+        the MediaPlayerEncounteredError event.
+        
+        Uses a simple counter: if we see multiple consecutive DirectX
+        error patterns, trigger recovery.
+        """
+        import sys
+        import io
+        
+        # Track errors seen in a time window
+        error_timestamps = []
+        ERROR_WINDOW = 10  # Look for errors within 10 second windows
+        ERRORS_TO_TRIGGER = 3  # Need 3 errors in window to trigger
+        
+        print("[VideoStream] DirectX error monitoring started")
+        
+        while self.running:
+            time.sleep(2)  # Check every 2 seconds
+            
+            # Skip if recovery is in progress or player hasn't started
+            if self._recovery_in_progress or not self._player_started:
+                continue
+            
+            # Check cooldown
+            current_time = time.time()
+            if current_time - self._last_recovery_time < self._recovery_cooldown:
+                continue
+            
+            # Check if we've accumulated enough DirectX errors
+            if self._directx_error_count >= self.DIRECTX_ERROR_THRESHOLD:
+                print(f"[VideoStream] DirectX error threshold reached ({self._directx_error_count} errors) - triggering recovery")
+                self._directx_error_count = 0  # Reset before triggering
+                self.status_queue.put("display-recovery-needed")
+                if self._display_recovery_callback:
+                    try:
+                        self._display_recovery_callback()
+                    except Exception as e:
+                        print(f"[VideoStream] DirectX recovery callback error: {e}")
+
+    def increment_directx_error(self):
+        """Called externally when a DirectX error is detected in output"""
+        if self._player_started and not self._recovery_in_progress:
+            self._directx_error_count += 1
+            if self._directx_error_count == 1:
+                print(f"[VideoStream] DirectX error detected (count: {self._directx_error_count})")
+            elif self._directx_error_count % 5 == 0:
+                print(f"[VideoStream] DirectX errors accumulating (count: {self._directx_error_count}/{self.DIRECTX_ERROR_THRESHOLD})")
+
+    def reset_directx_error_count(self):
+        """Reset the DirectX error counter (called after successful playback)"""
+        self._directx_error_count = 0
 
     def _monitor_stream(self):
         last_bitrate_ts = time.time()
@@ -383,6 +454,11 @@ class VideoPlayer:
         
         self.video_stream = VideoStream(self.stream_uri, vlc_params)
         self.video_stream.set_display_recovery_callback(self._recover_display)
+        
+        # Start stderr monitoring for DirectX errors
+        self._stderr_monitor_running = True
+        self._start_stderr_monitor()
+        
         self.setup_gui()
 
     def _get_stream_uri(self, camera_ip, username, password):
@@ -609,6 +685,7 @@ class VideoPlayer:
             self.video_stream._last_vout_time = time.time()
             self.video_stream._last_vout_count = 0
             self.video_stream._player_started = False  # Will be set to True by Playing event
+            self.video_stream._directx_error_count = 0  # Reset DirectX error counter
             
             print("[VideoPlayer] Display recovery completed successfully")
             
@@ -620,6 +697,50 @@ class VideoPlayer:
         finally:
             # Always reset recovery flag
             self.video_stream._recovery_in_progress = False
+
+    def _start_stderr_monitor(self):
+        """Start a thread to monitor stderr for DirectX error messages from VLC
+        
+        VLC outputs DirectX errors like 'SwapChain Present failed. (hr=0x887A0005)'
+        to stderr, but doesn't always fire MediaPlayerEncounteredError events.
+        This method redirects stderr and monitors for these error patterns.
+        """
+        # Store original stderr
+        self._original_stderr = sys.stderr
+        
+        # Create a custom stderr that monitors for DirectX errors
+        class StderrMonitor(io.TextIOBase):
+            def __init__(self, original_stderr, video_player):
+                self.original_stderr = original_stderr
+                self.video_player = video_player
+                self.directx_patterns = VideoStream.DIRECTX_ERROR_PATTERNS
+                
+            def write(self, text):
+                # Always write to original stderr
+                if self.original_stderr:
+                    self.original_stderr.write(text)
+                
+                # Check for DirectX error patterns
+                if text and self.video_player.video_stream:
+                    for pattern in self.directx_patterns:
+                        if pattern.lower() in text.lower():
+                            self.video_player.video_stream.increment_directx_error()
+                            break
+                return len(text) if text else 0
+            
+            def flush(self):
+                if self.original_stderr:
+                    self.original_stderr.flush()
+        
+        # Replace stderr with our monitor
+        sys.stderr = StderrMonitor(self._original_stderr, self)
+        print("[VideoPlayer] DirectX error monitoring via stderr started")
+
+    def _stop_stderr_monitor(self):
+        """Restore original stderr"""
+        if hasattr(self, '_original_stderr') and self._original_stderr:
+            sys.stderr = self._original_stderr
+            print("[VideoPlayer] Stderr monitor stopped")
 
 
     def update_bitrate(self):
@@ -634,6 +755,7 @@ class VideoPlayer:
             self.root.after(1000, self.update_bitrate)
 
     def on_closing(self):
+        self._stop_stderr_monitor()
         self.video_stream.stop()
         self.root.destroy()
 
