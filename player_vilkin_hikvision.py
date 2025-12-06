@@ -1,4 +1,4 @@
-# V0.3.6
+# V0.3.7
 
 import os
 import sys
@@ -18,6 +18,10 @@ import re
 import ctypes
 import tempfile
 import subprocess
+
+# Global flag to track if console output interception is active
+_console_intercept_active = False
+_original_console_write = None
 
 class VideoStream:
     # Display monitoring constants
@@ -168,15 +172,27 @@ class VideoStream:
             print(f"[VideoStream] Recovery cooldown active - ignoring ES deletion")
             return
         
+        # Set flag and trigger recovery
         self._es_deleted_detected = True
         self._last_recovery_time = current_time
         print("[VideoStream] Elementary stream deleted - triggering display recovery")
         self.status_queue.put("display-recovery-needed")
+        
+        # Call callback if available
         if self._display_recovery_callback:
+            print("[VideoStream] Calling recovery callback...")
             try:
                 self._display_recovery_callback()
+                print("[VideoStream] Recovery callback returned")
             except Exception as e:
                 print(f"[VideoStream] ES deleted callback failed: {e}")
+                # Clear flag if callback failed to prevent infinite loop
+                self._es_deleted_detected = False
+                import traceback
+                traceback.print_exc()
+        else:
+            print("[VideoStream] Warning: No recovery callback set!")
+            self._es_deleted_detected = False  # Clear flag since we can't recover
 
     def set_display_recovery_callback(self, callback):
         """Set callback to be called when display needs recovery"""
@@ -212,13 +228,18 @@ class VideoStream:
         last_vout_count = 0
         no_vout_cycles = 0
         vout_monitoring_active = False
+        last_display_issue_log_time = 0  # Rate limit logging
         
         while self.running:
             time.sleep(self.VOUT_CHECK_INTERVAL)
             
-            # Monitor error flags for logging
+            # Monitor error flags for logging (rate limited to avoid spam)
             if self._error_detected or self._es_deleted_detected:
-                print(f"[VideoStream] Display issue detected - error: {self._error_detected}, ES deleted: {self._es_deleted_detected}")
+                current_time = time.time()
+                # Only log once every 10 seconds to avoid spam
+                if current_time - last_display_issue_log_time > 10:
+                    print(f"[VideoStream] Display issue detected - error: {self._error_detected}, ES deleted: {self._es_deleted_detected}, recovery_in_progress: {self._recovery_in_progress}")
+                    last_display_issue_log_time = current_time
                 # Recovery triggered by event handlers
                 no_vout_cycles = 0
                 continue
@@ -715,114 +736,71 @@ class VideoPlayer:
         """Start monitoring for DirectX error messages from VLC
         
         VLC outputs DirectX errors like 'SwapChain Present failed. (hr=0x887A0005)'
-        to stderr via native code. This uses multiple approaches:
+        to stderr via native code. We use multiple detection methods:
         
-        1. Native stderr pipe capture (captures native C library output)
-        2. VLC log file monitoring (backup)
+        1. VLC log file monitoring (most reliable for VLC output)
+        2. Timer-based ES deletion recovery (if ES deleted and no recovery happens)
         """
         self._log_monitor_running = True
         self._last_log_position = 0
-        self._native_stderr_pipe = None
-        self._original_stderr_fd = None
+        self._es_deleted_recovery_timer = None
         
-        # Try to set up native stderr capture (Windows only)
+        # Clear old log file content and track position
         try:
-            if sys.platform == 'win32':
-                self._setup_native_stderr_capture()
-        except Exception as e:
-            print(f"[VideoPlayer] Native stderr capture failed: {e}")
+            if os.path.exists(self._vlc_log_file):
+                # Get current file size as starting position
+                self._last_log_position = os.path.getsize(self._vlc_log_file)
+            else:
+                self._last_log_position = 0
+        except:
+            self._last_log_position = 0
         
-        # Start log file monitoring as backup
+        # Start log file monitoring
         threading.Thread(target=self._monitor_vlc_log_file, daemon=True).start()
+        
+        # Start ES deletion backup recovery timer
+        threading.Thread(target=self._monitor_es_deletion_timeout, daemon=True).start()
+        
         print(f"[VideoPlayer] DirectX error monitoring started (log file: {self._vlc_log_file})")
     
-    def _setup_native_stderr_capture(self):
-        """Set up native stderr capture using OS-level pipe redirection
+    def _monitor_es_deletion_timeout(self):
+        """Backup recovery mechanism: if ES deleted flag stays true for too long, force recovery
         
-        This captures output from native C libraries like VLC's libvlc.
-        We create a pipe, duplicate the stderr file descriptor to the pipe,
-        and read from the pipe in a separate thread.
+        This handles cases where ES deletion is detected but recovery doesn't trigger/complete
         """
-        import msvcrt
-        
-        # Create a pipe for capturing stderr
-        read_fd, write_fd = os.pipe()
-        
-        # Save original stderr file descriptor
-        self._original_stderr_fd = os.dup(2)
-        
-        # Redirect stderr (fd 2) to our write end of the pipe
-        os.dup2(write_fd, 2)
-        os.close(write_fd)
-        
-        # Store read end for monitoring
-        self._stderr_read_fd = read_fd
-        
-        # Start thread to read from the pipe
-        threading.Thread(target=self._read_native_stderr, daemon=True).start()
-        print("[VideoPlayer] Native stderr capture initialized")
-    
-    def _read_native_stderr(self):
-        """Read from the native stderr pipe and check for DirectX errors"""
-        patterns = VideoStream.DIRECTX_ERROR_PATTERNS
-        buffer = ""
+        ES_DELETION_TIMEOUT = 30  # If ES deleted stays true for 30 seconds, force recovery
         
         while self._log_monitor_running and self._stderr_monitor_running:
-            try:
-                # Non-blocking read attempt
-                import select
-                if sys.platform == 'win32':
-                    # On Windows, use os.read with a timeout approach
-                    try:
-                        data = os.read(self._stderr_read_fd, 4096)
-                        if data:
-                            text = data.decode('utf-8', errors='ignore')
-                            buffer += text
-                            
-                            # Also write to original stderr so user sees output
-                            if self._original_stderr_fd:
-                                os.write(self._original_stderr_fd, data)
-                            
-                            # Process complete lines
-                            while '\n' in buffer:
-                                line, buffer = buffer.split('\n', 1)
-                                line_lower = line.lower()
-                                for pattern in patterns:
-                                    if pattern.lower() in line_lower:
-                                        if self.video_stream:
-                                            self.video_stream.increment_directx_error()
-                                        break
-                    except (OSError, BlockingIOError):
-                        pass
-                else:
-                    # On Unix, use select
-                    readable, _, _ = select.select([self._stderr_read_fd], [], [], 0.1)
-                    if readable:
-                        data = os.read(self._stderr_read_fd, 4096)
-                        if data:
-                            text = data.decode('utf-8', errors='ignore')
-                            buffer += text
-                            
-                            # Process complete lines
-                            while '\n' in buffer:
-                                line, buffer = buffer.split('\n', 1)
-                                line_lower = line.lower()
-                                for pattern in patterns:
-                                    if pattern.lower() in line_lower:
-                                        if self.video_stream:
-                                            self.video_stream.increment_directx_error()
-                                        break
-            except Exception as e:
-                pass
+            time.sleep(5)  # Check every 5 seconds
             
-            time.sleep(0.1)
+            if not self.video_stream:
+                continue
+            
+            # Check if ES deleted flag has been stuck for too long
+            if self.video_stream._es_deleted_detected:
+                # Check if we're not already in recovery and cooldown has passed
+                if not self.video_stream._recovery_in_progress:
+                    current_time = time.time()
+                    if current_time - self.video_stream._last_recovery_time >= self.video_stream._recovery_cooldown:
+                        print(f"[VideoPlayer] ES deletion detected but no recovery - forcing recovery")
+                        self.video_stream._es_deleted_detected = False  # Clear flag
+                        try:
+                            self._recover_display()
+                        except Exception as e:
+                            print(f"[VideoPlayer] Forced ES recovery failed: {e}")
     
     def _monitor_vlc_log_file(self):
-        """Monitor VLC log file for DirectX error patterns (backup method)
+        """Monitor VLC log file for DirectX error patterns
         
-        This is a backup approach using VLC's --file-logging option.
+        This is the primary method for detecting DirectX errors from VLC.
+        VLC writes detailed logs when --file-logging is enabled.
         """
         patterns = VideoStream.DIRECTX_ERROR_PATTERNS
+        consecutive_errors = 0
+        last_error_time = 0
+        ERROR_RESET_TIME = 10  # Reset error count after 10 seconds of no errors
+        
+        print(f"[VideoPlayer] VLC log file monitor started, watching: {self._vlc_log_file}")
         
         while self._log_monitor_running and self._stderr_monitor_running:
             try:
@@ -832,44 +810,49 @@ class VideoPlayer:
                     continue
                 
                 # Read new content from log file
-                with open(self._vlc_log_file, 'r', encoding='utf-8', errors='ignore') as f:
-                    f.seek(self._last_log_position)
-                    new_content = f.read()
-                    self._last_log_position = f.tell()
+                try:
+                    with open(self._vlc_log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        f.seek(self._last_log_position)
+                        new_content = f.read()
+                        self._last_log_position = f.tell()
+                except (IOError, OSError) as e:
+                    # Log file might be locked by VLC
+                    time.sleep(0.5)
+                    continue
                 
                 # Check for DirectX errors in new content
                 if new_content:
+                    current_time = time.time()
+                    
+                    # Reset error count if too much time has passed
+                    if current_time - last_error_time > ERROR_RESET_TIME:
+                        consecutive_errors = 0
+                    
                     lines = new_content.split('\n')
                     for line in lines:
+                        if not line.strip():
+                            continue
                         line_lower = line.lower()
                         for pattern in patterns:
                             if pattern.lower() in line_lower:
+                                last_error_time = current_time
+                                consecutive_errors += 1
+                                print(f"[VideoPlayer] DirectX error in log (count: {consecutive_errors}): {line[:100]}")
+                                
                                 if self.video_stream:
                                     self.video_stream.increment_directx_error()
                                 # Only count each line once
                                 break
                 
             except Exception as e:
-                # Log file might be locked by VLC, that's okay
-                pass
+                print(f"[VideoPlayer] Log file monitoring error: {e}")
             
             time.sleep(0.5)  # Check log file every 500ms
     
     def _stop_directx_monitor(self):
-        """Stop DirectX monitoring and restore stderr"""
+        """Stop DirectX monitoring"""
         self._log_monitor_running = False
         self._stderr_monitor_running = False
-        
-        # Restore original stderr if we redirected it
-        try:
-            if hasattr(self, '_original_stderr_fd') and self._original_stderr_fd:
-                os.dup2(self._original_stderr_fd, 2)
-                os.close(self._original_stderr_fd)
-                self._original_stderr_fd = None
-            if hasattr(self, '_stderr_read_fd'):
-                os.close(self._stderr_read_fd)
-        except:
-            pass
         
         # Clean up log file
         try:
