@@ -1,6 +1,7 @@
-# V0.2.4
+# V0.3.7
 
 import os
+import sys
 from queue import Queue, Empty
 import threading
 import time
@@ -12,8 +13,32 @@ from PIL import Image, ImageTk
 from onvif import ONVIFCamera
 import argparse
 from collections import deque
+import io
+import re
+import ctypes
+import tempfile
+import subprocess
+
+# Global flag to track if console output interception is active
+_console_intercept_active = False
+_original_console_write = None
 
 class VideoStream:
+    # Display monitoring constants
+    VOUT_CHECK_INTERVAL = 5  # Check every 5 seconds
+    VOUT_TIMEOUT_THRESHOLD = 60  # Consider display lost after 60 seconds without vout (very conservative)
+    VOUT_RECOVERY_CYCLES = 3  # Number of consecutive cycles before triggering recovery
+    MIN_VOUT_COUNT_FOR_MONITORING = 10  # Require at least 10 vout events before monitoring kicks in
+    
+    # DirectX error detection - these errors indicate graphics device loss
+    DIRECTX_ERROR_PATTERNS = [
+        "SwapChain Present failed",
+        "0x887A0005",  # DXGI_ERROR_DEVICE_REMOVED
+        "DXGI_ERROR_DEVICE_REMOVED",
+        "direct3d11 vout display error"
+    ]
+    DIRECTX_ERROR_THRESHOLD = 5  # Number of consecutive errors before triggering recovery
+    
     def __init__(self, stream_uri, instance_params=None):
         if instance_params is None:
             instance_params = [
@@ -46,22 +71,273 @@ class VideoStream:
         self._restart_attempt = 0  # Compteur de tentatives de redémarrage
         self._max_restart_delay = 30  # Délai maximum entre les tentatives (en secondes)
         
+        # Display recovery mechanism
+        self._last_vout_count = 0
+        self._last_vout_time = time.time()
+        self._display_recovery_callback = None
+        self._error_detected = False
+        self._es_deleted_detected = False
+        self._recovery_in_progress = False
+        self._last_recovery_time = 0
+        self._recovery_cooldown = 15  # Minimum 15 seconds between recovery attempts (increased from 5)
+        self._player_started = False  # Track if player has successfully started
+        self._player_start_time = 0  # Track when player started playing
+        self._directx_error_count = 0  # Track consecutive DirectX errors detected
+        self._last_log_position = 0  # Track position in VLC log file
+        
         # Event handler pour les frames
         self.player.event_manager().event_attach(vlc.EventType.MediaPlayerTimeChanged, 
                                                lambda _: self._increment_frame())
+        
+        # Event handler for video output (vout) to detect display loss
+        self.player.event_manager().event_attach(vlc.EventType.MediaPlayerVout,
+                                               lambda _: self._on_vout_event())
+        
+        # Event handler for errors (graphics device lost)
+        self.player.event_manager().event_attach(vlc.EventType.MediaPlayerEncounteredError,
+                                               lambda _: self._on_error_event())
+        
+        # Event handler for elementary stream deletion (video stream lost)
+        self.player.event_manager().event_attach(vlc.EventType.MediaPlayerESDeleted,
+                                               lambda event: self._on_es_deleted_event(event))
+        
+        # Event handler for player playing state (mark as started)
+        self.player.event_manager().event_attach(vlc.EventType.MediaPlayerPlaying,
+                                               lambda _: self._on_playing_event())
     
     def _increment_frame(self):
         self._frame_count += 1
+
+    def _on_vout_event(self):
+        """Called when video output event occurs"""
+        self._last_vout_count += 1
+        self._last_vout_time = time.time()
+
+    def _on_playing_event(self):
+        """Called when player enters Playing state"""
+        self._player_started = True
+        self._player_start_time = time.time()
+        print("[VideoStream] Player started successfully")
+
+    def _on_error_event(self):
+        """Called when VLC player encounters an error (e.g., DirectX device lost)"""
+        # Only trigger recovery if player has started and cooldown has passed
+        if not self._player_started:
+            print("[VideoStream] VLC error during startup - ignoring")
+            return
+            
+        if self._recovery_in_progress:
+            print("[VideoStream] Recovery already in progress - ignoring error")
+            return
+            
+        current_time = time.time()
+        if current_time - self._last_recovery_time < self._recovery_cooldown:
+            print(f"[VideoStream] Recovery cooldown active - ignoring error")
+            return
+        
+        self._error_detected = True
+        self._last_recovery_time = current_time
+        print("[VideoStream] VLC error detected - triggering display recovery")
+        self.status_queue.put("display-recovery-needed")
+        if self._display_recovery_callback:
+            try:
+                self._display_recovery_callback()
+            except Exception as e:
+                print(f"[VideoStream] Error callback failed: {e}")
+
+    def _on_es_deleted_event(self, event):
+        """Called when elementary stream (video/audio) is deleted
+        
+        ES deletion can occur during normal operation (codec changes, stream switches).
+        Only trigger recovery if it happens after player has been stable for a while.
+        """
+        # Only trigger recovery if player has started and cooldown has passed
+        if not self._player_started:
+            print("[VideoStream] ES deleted during startup - ignoring")
+            return
+            
+        # Grace period: ignore ES deletion for 30 seconds after player starts
+        # This allows codec initialization and stream setup to complete
+        current_time = time.time()
+        time_since_start = current_time - self._player_start_time
+        if time_since_start < 30:
+            print(f"[VideoStream] ES deleted during grace period ({time_since_start:.1f}s since start) - ignoring")
+            return
+            
+        if self._recovery_in_progress:
+            print("[VideoStream] Recovery already in progress - ignoring ES deletion")
+            return
+            
+        if current_time - self._last_recovery_time < self._recovery_cooldown:
+            print(f"[VideoStream] Recovery cooldown active - ignoring ES deletion")
+            return
+        
+        # Set flag and trigger recovery
+        self._es_deleted_detected = True
+        self._last_recovery_time = current_time
+        print("[VideoStream] Elementary stream deleted - triggering display recovery")
+        self.status_queue.put("display-recovery-needed")
+        
+        # Call callback if available
+        if self._display_recovery_callback:
+            print("[VideoStream] Calling recovery callback...")
+            try:
+                self._display_recovery_callback()
+                print("[VideoStream] Recovery callback returned")
+            except Exception as e:
+                print(f"[VideoStream] ES deleted callback failed: {e}")
+                # Clear flag if callback failed to prevent infinite loop
+                self._es_deleted_detected = False
+                import traceback
+                traceback.print_exc()
+        else:
+            print("[VideoStream] Warning: No recovery callback set!")
+            self._es_deleted_detected = False  # Clear flag since we can't recover
+
+    def set_display_recovery_callback(self, callback):
+        """Set callback to be called when display needs recovery"""
+        self._display_recovery_callback = callback
 
     def start(self):
         self.running = True
         self.player.play()
         self.player.audio_set_mute(self.is_muted)
         threading.Thread(target=self._monitor_stream, daemon=True).start()
+        threading.Thread(target=self._monitor_display, daemon=True).start()
+        threading.Thread(target=self._monitor_directx_errors, daemon=True).start()
 
     def stop(self):
         self.running = False
         self.player.stop()
+
+    def _monitor_display(self):
+        """Monitor video display for error/ES deletion events and vout stagnation
+        
+        This method runs in a separate thread and monitors for display issues.
+        Uses a hybrid approach:
+        1. Immediate recovery on MediaPlayerEncounteredError events
+        2. Immediate recovery on MediaPlayerESDeleted events (after grace period)
+        3. Backup vout monitoring for cases where VLC doesn't fire error events
+        
+        Vout monitoring is conservative:
+        - Only activates after player has been stable with vout events
+        - Requires 60+ seconds of no vout events
+        - Requires player to be in Playing state
+        - Avoids false positives during initialization and codec changes
+        """
+        last_vout_count = 0
+        no_vout_cycles = 0
+        vout_monitoring_active = False
+        last_display_issue_log_time = 0  # Rate limit logging
+        
+        while self.running:
+            time.sleep(self.VOUT_CHECK_INTERVAL)
+            
+            # Monitor error flags for logging (rate limited to avoid spam)
+            if self._error_detected or self._es_deleted_detected:
+                current_time = time.time()
+                # Only log once every 10 seconds to avoid spam
+                if current_time - last_display_issue_log_time > 10:
+                    print(f"[VideoStream] Display issue detected - error: {self._error_detected}, ES deleted: {self._es_deleted_detected}, recovery_in_progress: {self._recovery_in_progress}")
+                    last_display_issue_log_time = current_time
+                # Recovery triggered by event handlers
+                no_vout_cycles = 0
+                continue
+            
+            # Check player state
+            state = self.player.get_state()
+            
+            # Only monitor vout when player is playing
+            if state != vlc.State.Playing:
+                no_vout_cycles = 0
+                vout_monitoring_active = False
+                continue
+            
+            # Check if player has been stable enough to enable vout monitoring
+            # Only monitor if we've seen enough vout events (video was working)
+            current_vout_count = self._last_vout_count
+            if current_vout_count >= self.MIN_VOUT_COUNT_FOR_MONITORING and not vout_monitoring_active:
+                vout_monitoring_active = True
+                print(f"[VideoStream] Vout monitoring activated (received {current_vout_count} vout events)")
+            
+            # Vout monitoring: detect when vout events stop after video was working
+            if vout_monitoring_active:
+                vout_time_since_last = time.time() - self._last_vout_time
+                
+                # Check if vout has stagnated
+                if current_vout_count == last_vout_count and vout_time_since_last > self.VOUT_TIMEOUT_THRESHOLD:
+                    no_vout_cycles += 1
+                    print(f"[VideoStream] Vout stagnation detected: {vout_time_since_last:.1f}s since last vout (cycle {no_vout_cycles}/{self.VOUT_RECOVERY_CYCLES})")
+                    
+                    # Trigger recovery after multiple consecutive cycles
+                    if no_vout_cycles >= self.VOUT_RECOVERY_CYCLES:
+                        print(f"[VideoStream] Vout timeout - no updates for {vout_time_since_last:.1f}s - triggering recovery")
+                        self.status_queue.put("display-recovery-needed")
+                        if self._display_recovery_callback:
+                            try:
+                                self._display_recovery_callback()
+                            except Exception as e:
+                                print(f"[VideoStream] Vout recovery callback error: {e}")
+                        no_vout_cycles = 0  # Reset after triggering
+                        vout_monitoring_active = False  # Will reactivate after recovery
+                else:
+                    no_vout_cycles = 0  # Reset if vout is working
+                
+                last_vout_count = current_vout_count
+
+    def _monitor_directx_errors(self):
+        """Monitor for DirectX errors by watching VLC log file and stderr
+        
+        This is a safety net for cases where VLC logs DirectX errors
+        (like DXGI_ERROR_DEVICE_REMOVED) to console but doesn't fire
+        the MediaPlayerEncounteredError event.
+        
+        Uses a simple counter: if we see multiple consecutive DirectX
+        error patterns, trigger recovery.
+        """
+        import sys
+        import io
+        
+        # Track errors seen in a time window
+        error_timestamps = []
+        ERROR_WINDOW = 10  # Look for errors within 10 second windows
+        ERRORS_TO_TRIGGER = 3  # Need 3 errors in window to trigger
+        
+        print("[VideoStream] DirectX error monitoring started")
+        
+        while self.running:
+            time.sleep(2)  # Check every 2 seconds
+            
+            # Skip if recovery is in progress or player hasn't started
+            if self._recovery_in_progress or not self._player_started:
+                continue
+            
+            # Check cooldown
+            current_time = time.time()
+            if current_time - self._last_recovery_time < self._recovery_cooldown:
+                continue
+            
+            # Check if we've accumulated enough DirectX errors
+            if self._directx_error_count >= self.DIRECTX_ERROR_THRESHOLD:
+                print(f"[VideoStream] DirectX error threshold reached ({self._directx_error_count} errors) - triggering recovery")
+                self._directx_error_count = 0  # Reset before triggering
+                self.status_queue.put("display-recovery-needed")
+                if self._display_recovery_callback:
+                    try:
+                        self._display_recovery_callback()
+                    except Exception as e:
+                        print(f"[VideoStream] DirectX recovery callback error: {e}")
+
+    def increment_directx_error(self):
+        """Called externally when a DirectX error is detected in output"""
+        if self._player_started and not self._recovery_in_progress:
+            self._directx_error_count += 1
+            # More verbose logging - print every error detection
+            print(f"[VideoStream] DirectX error detected (count: {self._directx_error_count}/{self.DIRECTX_ERROR_THRESHOLD})")
+
+    def reset_directx_error_count(self):
+        """Reset the DirectX error counter (called after successful playback)"""
+        self._directx_error_count = 0
 
     def _monitor_stream(self):
         last_bitrate_ts = time.time()
@@ -191,14 +467,32 @@ class VideoPlayer:
         self.button_style = ButtonStyle()  # Ajout du style de bouton
         self.base_title = f"Camera {camera_id}"  # Changed from "Caméra" to "Camera"
         
+        # Create unique log file for this player instance
+        self._vlc_log_file = os.path.join(tempfile.gettempdir(), f'vlc-camera-{camera_id}-{os.getpid()}.log')
+        # Ensure old log file is cleaned up
+        try:
+            if os.path.exists(self._vlc_log_file):
+                os.remove(self._vlc_log_file)
+        except:
+            pass
+        
         vlc_params = [
             '--no-video-deco', '--no-embedded-video', '--rtsp-tcp',
             '--network-caching=50', '--file-caching=50', '--live-caching=50',
             '--no-skip-frames', '--drop-late-frames',
-            '--avcodec-threads=2', '--sout-mux-caching=0'
+            '--avcodec-threads=2', '--sout-mux-caching=0',
+            '--file-logging',
+            f'--logfile={self._vlc_log_file}',
+            '--log-verbose=2'
         ]
         
         self.video_stream = VideoStream(self.stream_uri, vlc_params)
+        self.video_stream.set_display_recovery_callback(self._recover_display)
+        
+        # Start DirectX error monitoring
+        self._stderr_monitor_running = True
+        self._start_directx_monitor()
+        
         self.setup_gui()
 
     def _get_stream_uri(self, camera_ip, username, password):
@@ -330,10 +624,245 @@ class VideoPlayer:
             msg = self.video_stream.status_queue.get_nowait()
             if msg == "restart":
                 print("Stream frozen, restarting...")  # Changed from "Flux figé, redémarrage..."
+            elif msg == "display-recovery-needed":
+                print("Display recovery triggered from queue")
+                self._recover_display()
         except Empty:
             pass
         finally:
             self.root.after(2000, self.check_stream_status)
+
+    def _recover_display(self):
+        """Recover video display by recreating player after graphics device loss
+        
+        When DirectX encounters DXGI_ERROR_DEVICE_REMOVED, we need to:
+        1. Stop the current player
+        2. Release video output
+        3. Create a new media player instance
+        4. Re-attach to window handle
+        5. Resume playback
+        """
+        # Prevent concurrent recovery attempts
+        if self.video_stream._recovery_in_progress:
+            print("[VideoPlayer] Recovery already in progress - skipping")
+            return
+            
+        try:
+            self.video_stream._recovery_in_progress = True
+            
+            # Clear error flags BEFORE recovery to prevent re-triggering during the process
+            self.video_stream._error_detected = False
+            self.video_stream._es_deleted_detected = False
+            
+            print("[VideoPlayer] Attempting to recover video display after graphics device loss...")
+            
+            if not self.frame or not self.video_stream:
+                print("[VideoPlayer] Warning: Frame or stream not available for recovery")
+                return
+            
+            # Get current state before stopping
+            was_muted = self.video_stream.is_muted
+            
+            # Stop current player
+            print("[VideoPlayer] Stopping current player...")
+            self.video_stream.player.stop()
+            time.sleep(0.5)  # Give time for stop to complete
+            
+            # Release video output (use 0 instead of None for VLC compatibility)
+            print("[VideoPlayer] Releasing video output...")
+            self.video_stream.player.set_hwnd(0)
+            time.sleep(0.5)
+            
+            # Create new media player instance
+            print("[VideoPlayer] Creating new media player...")
+            old_player = self.video_stream.player
+            self.video_stream.player = self.video_stream.instance.media_player_new()
+            
+            # Re-attach event handlers to new player
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerTimeChanged,
+                lambda _: self.video_stream._increment_frame()
+            )
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerVout,
+                lambda _: self.video_stream._on_vout_event()
+            )
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerEncounteredError,
+                lambda _: self.video_stream._on_error_event()
+            )
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerESDeleted,
+                lambda event: self.video_stream._on_es_deleted_event(event)
+            )
+            self.video_stream.player.event_manager().event_attach(
+                vlc.EventType.MediaPlayerPlaying,
+                lambda _: self.video_stream._on_playing_event()
+            )
+            
+            # Set media and attach to window
+            self.video_stream.player.set_media(self.video_stream.media)
+            hwnd = self.frame.winfo_id()
+            if hwnd:
+                self.video_stream.player.set_hwnd(hwnd)
+                print(f"[VideoPlayer] Re-attached to hwnd {hwnd}")
+            else:
+                print("[VideoPlayer] Warning: Could not get valid window handle")
+                return
+            
+            # Restart playback
+            print("[VideoPlayer] Restarting playback...")
+            self.video_stream.player.play()
+            self.video_stream.player.audio_set_mute(was_muted)
+            
+            # Reset vout tracking
+            self.video_stream._last_vout_time = time.time()
+            self.video_stream._last_vout_count = 0
+            self.video_stream._player_started = False  # Will be set to True by Playing event
+            self.video_stream._directx_error_count = 0  # Reset DirectX error counter
+            
+            print("[VideoPlayer] Display recovery completed successfully")
+            
+        except Exception as e:
+            state = self.video_stream.player.get_state() if self.video_stream and self.video_stream.player else "unknown"
+            print(f"[VideoPlayer] Error during display recovery (player state: {state}): {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Always reset recovery flag
+            self.video_stream._recovery_in_progress = False
+
+    def _start_directx_monitor(self):
+        """Start monitoring for DirectX error messages from VLC
+        
+        VLC outputs DirectX errors like 'SwapChain Present failed. (hr=0x887A0005)'
+        to stderr via native code. We use multiple detection methods:
+        
+        1. VLC log file monitoring (most reliable for VLC output)
+        2. Timer-based ES deletion recovery (if ES deleted and no recovery happens)
+        """
+        self._log_monitor_running = True
+        self._last_log_position = 0
+        self._es_deleted_recovery_timer = None
+        
+        # Clear old log file content and track position
+        try:
+            if os.path.exists(self._vlc_log_file):
+                # Get current file size as starting position
+                self._last_log_position = os.path.getsize(self._vlc_log_file)
+            else:
+                self._last_log_position = 0
+        except:
+            self._last_log_position = 0
+        
+        # Start log file monitoring
+        threading.Thread(target=self._monitor_vlc_log_file, daemon=True).start()
+        
+        # Start ES deletion backup recovery timer
+        threading.Thread(target=self._monitor_es_deletion_timeout, daemon=True).start()
+        
+        print(f"[VideoPlayer] DirectX error monitoring started (log file: {self._vlc_log_file})")
+    
+    def _monitor_es_deletion_timeout(self):
+        """Backup recovery mechanism: if ES deleted flag stays true for too long, force recovery
+        
+        This handles cases where ES deletion is detected but recovery doesn't trigger/complete
+        """
+        ES_DELETION_TIMEOUT = 30  # If ES deleted stays true for 30 seconds, force recovery
+        
+        while self._log_monitor_running and self._stderr_monitor_running:
+            time.sleep(5)  # Check every 5 seconds
+            
+            if not self.video_stream:
+                continue
+            
+            # Check if ES deleted flag has been stuck for too long
+            if self.video_stream._es_deleted_detected:
+                # Check if we're not already in recovery and cooldown has passed
+                if not self.video_stream._recovery_in_progress:
+                    current_time = time.time()
+                    if current_time - self.video_stream._last_recovery_time >= self.video_stream._recovery_cooldown:
+                        print(f"[VideoPlayer] ES deletion detected but no recovery - forcing recovery")
+                        self.video_stream._es_deleted_detected = False  # Clear flag
+                        try:
+                            self._recover_display()
+                        except Exception as e:
+                            print(f"[VideoPlayer] Forced ES recovery failed: {e}")
+    
+    def _monitor_vlc_log_file(self):
+        """Monitor VLC log file for DirectX error patterns
+        
+        This is the primary method for detecting DirectX errors from VLC.
+        VLC writes detailed logs when --file-logging is enabled.
+        """
+        patterns = VideoStream.DIRECTX_ERROR_PATTERNS
+        consecutive_errors = 0
+        last_error_time = 0
+        ERROR_RESET_TIME = 10  # Reset error count after 10 seconds of no errors
+        
+        print(f"[VideoPlayer] VLC log file monitor started, watching: {self._vlc_log_file}")
+        
+        while self._log_monitor_running and self._stderr_monitor_running:
+            try:
+                # Wait for log file to be created
+                if not os.path.exists(self._vlc_log_file):
+                    time.sleep(1)
+                    continue
+                
+                # Read new content from log file
+                try:
+                    with open(self._vlc_log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        f.seek(self._last_log_position)
+                        new_content = f.read()
+                        self._last_log_position = f.tell()
+                except (IOError, OSError) as e:
+                    # Log file might be locked by VLC
+                    time.sleep(0.5)
+                    continue
+                
+                # Check for DirectX errors in new content
+                if new_content:
+                    current_time = time.time()
+                    
+                    # Reset error count if too much time has passed
+                    if current_time - last_error_time > ERROR_RESET_TIME:
+                        consecutive_errors = 0
+                    
+                    lines = new_content.split('\n')
+                    for line in lines:
+                        if not line.strip():
+                            continue
+                        line_lower = line.lower()
+                        for pattern in patterns:
+                            if pattern.lower() in line_lower:
+                                last_error_time = current_time
+                                consecutive_errors += 1
+                                print(f"[VideoPlayer] DirectX error in log (count: {consecutive_errors}): {line[:100]}")
+                                
+                                if self.video_stream:
+                                    self.video_stream.increment_directx_error()
+                                # Only count each line once
+                                break
+                
+            except Exception as e:
+                print(f"[VideoPlayer] Log file monitoring error: {e}")
+            
+            time.sleep(0.5)  # Check log file every 500ms
+    
+    def _stop_directx_monitor(self):
+        """Stop DirectX monitoring"""
+        self._log_monitor_running = False
+        self._stderr_monitor_running = False
+        
+        # Clean up log file
+        try:
+            if hasattr(self, '_vlc_log_file') and os.path.exists(self._vlc_log_file):
+                os.remove(self._vlc_log_file)
+        except:
+            pass
+        
+        print("[VideoPlayer] DirectX error monitoring stopped")
+
 
     def update_bitrate(self):
         try:
@@ -347,6 +876,7 @@ class VideoPlayer:
             self.root.after(1000, self.update_bitrate)
 
     def on_closing(self):
+        self._stop_directx_monitor()
         self.video_stream.stop()
         self.root.destroy()
 
