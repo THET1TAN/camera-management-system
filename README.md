@@ -9,6 +9,7 @@ A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) c
 - **🎮 PTZ Control**: Real-time Pan-Tilt-Zoom control with keyboard shortcuts
 - **🔧 Camera Manager**: Add, edit, and delete camera configurations
 - **📡 ONVIF Support**: Full compatibility with ONVIF-compliant cameras
+- **🔊 Audio Backchannel Probe**: Diagnostic tool to check whether a camera can receive audio for speaker / talk features
 - **💾 SQLite Database**: Lightweight local database for camera storage
 - **🖱️ User-Friendly Interface**: Clean Tkinter-based GUI for all operations
 
@@ -72,6 +73,40 @@ Control camera movement with keyboard shortcuts:
 | `1-9` | Camera Presets |
 | `ESC` | Exit |
 
+### Audio Backchannel / Camera Speaker Probe
+Before adding a Push-to-Talk button, verify whether the camera exposes a compatible ONVIF/RTSP audio backchannel:
+
+```bash
+python camera_audio_backchannel_probe.py --camera-id 1
+```
+
+You can also test a camera without using the local database:
+
+```bash
+python camera_audio_backchannel_probe.py --ip 192.168.1.50 --username admin
+```
+
+The probe is read-only. It does **not** send microphone audio yet. It checks:
+
+- ONVIF audio output objects
+- ONVIF audio decoder configurations
+- RTSP `DESCRIBE` with `Require: www.onvif.org/ver20/backchannel`
+- SDP clues such as backchannel sections and supported audio codecs
+
+Expected result examples:
+
+```text
+Likely result: audio backchannel candidate detected. Push-to-Talk is worth implementing next.
+```
+
+or:
+
+```text
+Result: camera/RTSP server explicitly says ONVIF backchannel is not supported.
+```
+
+If the probe detects a candidate backchannel, the next implementation step is a Push-to-Talk control that captures microphone audio, encodes it in the camera-supported codec, and streams it to the camera over the negotiated RTSP/RTP backchannel.
+
 ## 🏗️ Architecture
 
 ### Core Components
@@ -80,6 +115,7 @@ Control camera movement with keyboard shortcuts:
 - **`camera_manager.py`**: Camera configuration management
 - **`ptz_keyboard_control.py`**: Real-time PTZ control interface
 - **`player_vilkin_hikvision.py`**: Video stream player (Hikvision optimized)
+- **`camera_audio_backchannel_probe.py`**: ONVIF/RTSP diagnostic tool for camera speaker / Push-to-Talk support
 
 ### Security Features
 
@@ -155,6 +191,7 @@ def get_python39():
 - [ ] Camera group management
 - [ ] Recording and playback features
 - [ ] Motion detection alerts
+- [ ] Push-to-Talk / camera speaker support after audio backchannel validation
 - [ ] Mobile app companion
 
 ## 🤝 Contributing
@@ -162,7 +199,7 @@ def get_python39():
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
+4. Push to the branch
 5. Open a Pull Request
 
 ## 📝 License
