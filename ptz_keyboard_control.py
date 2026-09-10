@@ -10,7 +10,7 @@ from ptz_diagnostics import PTZDiagnostics, install_wire_trace
 from ptz_velocity import VelocitySpaces
 
 VERSION = "0.2.6"
-REVISION = 8
+REVISION = 9
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
 command_worker = None
@@ -26,7 +26,7 @@ preset_tokens = {str(number): f'PresetToken{number}' for number in range(1, 10)}
 
 
 class KeyboardManager:
-    """Recalcule chaque axe à partir des touches physiques encore maintenues."""
+    """Recalcule chaque axe � partir des touches physiques encore maintenues."""
 
     AXES = (
         {'a': -1, 'left': -1, 'd': 1, 'right': 1},
@@ -37,7 +37,7 @@ class KeyboardManager:
     )
 
     def __init__(self):
-        # L'ordre d'insertion conserve la priorité du dernier appui réel.
+        # L'ordre d'insertion conserve la priorit� du dernier appui r�el.
         self.pressed_keys = {}
 
     def press_key(self, key, keycode=None):
@@ -46,17 +46,17 @@ class KeyboardManager:
             return False
         identity = keycode if keycode is not None else key
         if identity in self.pressed_keys:
-            return False  # Ignorer la répétition automatique du clavier.
+            return False  # Ignorer la r�p�tition automatique du clavier.
         self.pressed_keys[identity] = key
         return True
 
     def release_key(self, key, keycode=None):
-        # Le code physique reste stable même si Shift/Ctrl change le keysym.
+        # Le code physique reste stable m�me si Shift/Ctrl change le keysym.
         identity = keycode if keycode is not None else key.lower()
         return self.pressed_keys.pop(identity, None) is not None
 
     def synchronize(self, is_down):
-        """Récupère les relâchements manqués sans activer de nouvelles touches."""
+        """R�cup�re les rel�chements manqu�s sans activer de nouvelles touches."""
         if is_down is None:
             return
         for keycode in list(self.pressed_keys):
@@ -87,13 +87,13 @@ def create_key_state_reader():
     get_state = ctypes.WinDLL('user32').GetAsyncKeyState
     get_state.argtypes = [ctypes.c_int]
     get_state.restype = ctypes.c_short
-    # Seul le bit de poids fort indique une touche actuellement enfoncée.
+    # Seul le bit de poids fort indique une touche actuellement enfonc�e.
     return lambda keycode: bool(get_state(keycode) & 0x8000)
 
 
 def event_keycode(event):
     if sys.platform == 'win32':
-        # Tk peut utiliser le code générique pour les deux côtés.
+        # Tk peut utiliser le code g�n�rique pour les deux c�t�s.
         modifiers = {'shift_l': 0xA0, 'shift_r': 0xA1,
                      'control_l': 0xA2, 'control_r': 0xA3}
         return modifiers.get(event.keysym.lower(), event.keycode)
@@ -193,7 +193,8 @@ class PTZController:
     def update_title_status(self, status=None):
         if status is None:
             status = "In Use" if self.root.focus_get() else "Idle"
-        self.root.title(f"PTZ Control v{VERSION} r{REVISION} - Camera {self.camera_id} - {status}")
+        mode = 'Compatibility' if command_worker.conservative_stops else 'Direct velocity test'
+        self.root.title(f"PTZ Control v{VERSION} r{REVISION} - {mode} - Camera {self.camera_id} - {status}")
 
     def on_focus_in(self, event):
         global window_active
@@ -205,7 +206,7 @@ class PTZController:
 
     def check_focus(self):
         global window_active
-        # Un transfert du focus entre widgets de cette fenêtre reste actif.
+        # Un transfert du focus entre widgets de cette fen�tre reste actif.
         if self.root.focus_get() is None:
             window_active = False
             release_all_controls()
@@ -251,7 +252,9 @@ def main(argv=None):
     try:
         diagnostics = PTZDiagnostics(Path(__file__).with_name(f'ptz_control_{os.getpid()}.log'))
         diagnostics.record('session', version=VERSION, revision=REVISION,
-                           move_timeout=move_timeout, conservative_stops=conservative_stops)
+                           move_timeout=move_timeout, conservative_stops=conservative_stops,
+                           direct_refresh_seconds=(None if conservative_stops else
+                                                   PTZCommandWorker.DIRECT_REFRESH_SECONDS))
         diagnostics.record('velocity_spaces', **velocity_spaces.summary())
         diagnostics.record('wire_trace', enabled=install_wire_trace(ptz_service, diagnostics))
         if os.environ.get('CAMERA_PTZ_TRACE_HTTP', '').strip().lower() in ('1', 'true', 'yes', 'on'):
@@ -277,7 +280,7 @@ def main(argv=None):
     ))
     info_label.pack(padx=20, pady=20)
 
-    # Création du frame pour la vitesse
+    # Cr�ation du frame pour la vitesse
     speed_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)
     speed_frame.pack(padx=20, pady=10)
 
@@ -290,7 +293,7 @@ def main(argv=None):
     speed_value_label = tk.Label(speed_frame, text=f"{speed:.1f}", font=('Helvetica', 12, 'bold'))
     speed_value_label.pack(side=tk.LEFT, padx=10, pady=10)
 
-    # Création de la barre de progression pour la vitesse
+    # Cr�ation de la barre de progression pour la vitesse
     speed_progress = ttk.Progressbar(speed_frame, orient="horizontal", length=200, mode="determinate")
     speed_progress.pack(side=tk.LEFT, padx=10, pady=10)
     speed_progress['value'] = (speed - min_speed) / (max_speed - min_speed) * 100

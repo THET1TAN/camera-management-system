@@ -10,6 +10,7 @@ from unittest.mock import Mock
 
 from ptz_command_worker import ControlState, PTZCommandWorker, select_move_timeout
 from ptz_diagnostics import PTZDiagnostics
+from ptz_velocity import VelocitySpaces
 
 
 class FakeClock:
@@ -488,7 +489,7 @@ class SmoothWorkerTests(unittest.TestCase):
         self.camera.ptz.ContinuousMove.side_effect = self.camera.move
         self.clock.now += 0.21
         self.send(tilt=0.5)
-        self.assertEqual(self.camera.calls[-2:], [('stop', True, True), ('move', (0, 0.5, None))])
+        self.assertEqual(self.camera.calls[-2:], [('stop', True, True), ('move', (0, 0.5, 0))])
         self.assertEqual(self.camera.motion, [0, 0.5, 0])
 
     def test_full_release_after_failed_transition_never_resumes(self):
@@ -564,6 +565,99 @@ class SmoothWorkerTests(unittest.TestCase):
         self.assertEqual(self.camera.focus, 0.5)
         self.assertEqual(self.camera.calls[-1], ('focus', 0.5))
         self.assertEqual(self.camera.ptz.ContinuousMove.call_count, 1)
+
+    def test_native_timeout_keeps_diagonal_and_zoom_for_six_seconds(self):
+        self.worker.move_timeout = 60
+        for zoom in (-0.5, 0.5):
+            self.send(pan=0.5, tilt=-0.5, zoom=zoom)
+            for _ in range(24):
+                self.clock.now += 0.26
+                self.send(pan=0.5, tilt=-0.5, zoom=zoom)
+                request = self.camera.ptz.ContinuousMove.call_args.args[0]
+                self.assertEqual(request.Timeout, timedelta(seconds=60))
+                self.assertEqual(self.camera.motion, [0.5, -0.5, zoom])
+            self.send(pan=0.5, zoom=zoom)
+            self.assertEqual(self.camera.motion, [0.5, 0, zoom])
+            self.send()
+            self.assertEqual(self.camera.motion, [0, 0, 0])
+
+    def test_released_group_stays_zero_on_later_refreshes_and_changes(self):
+        self.worker.move_timeout = 60
+        self.send(pan=0.5, tilt=0.5, zoom=0.5)
+        self.send(pan=0.5)
+        for _ in range(3):
+            self.clock.now += 0.26
+            self.send(pan=0.5)
+            self.assertEqual(self.camera.calls[-1], ('move', (0.5, 0, 0)))
+        self.send(pan=-0.5)
+        self.assertEqual(self.camera.calls[-1], ('move', (-0.5, 0, 0)))
+        self.send(zoom=-0.5)
+        self.clock.now += 0.26
+        self.send(zoom=-0.5)
+        self.assertEqual(self.camera.calls[-1], ('move', (0, 0, -0.5)))
+        self.camera.ptz.Stop.assert_not_called()
+
+    def test_advertised_idle_groups_are_explicit_from_first_request(self):
+        spaces = VelocitySpaces(('pt', (-2, 4), (-6, 8)), ('zoom', (-0.2, 0.6)))
+        self.worker = PTZCommandWorker(self.camera.ptz, self.camera.imaging, 'profile', 'source',
+                                      move_timeout=60, clock=self.clock, velocity_spaces=spaces,
+                                      conservative_stops=False)
+        self.send(pan=0.5)
+        request = self.camera.ptz.ContinuousMove.call_args.args[0]
+        self.assertEqual(request.Velocity, {'PanTilt': {'x': 2, 'y': 0, 'space': 'pt'},
+                                          'Zoom': {'x': 0, 'space': 'zoom'}})
+
+    def test_camera_without_zoom_is_not_sent_idle_zoom_commands(self):
+        self.worker = PTZCommandWorker(self.camera.ptz, self.camera.imaging, 'profile', 'source',
+                                      move_timeout=60, clock=self.clock,
+                                      velocity_spaces=VelocitySpaces(('pt', (-1, 1), (-1, 1))),
+                                      conservative_stops=False)
+        self.send(pan=0.5, tilt=0.5)
+        self.clock.now += 0.26
+        self.send(pan=0.5)
+        for call in self.camera.ptz.ContinuousMove.call_args_list:
+            self.assertNotIn('Zoom', call.args[0].Velocity)
+
+    def test_refresh_waits_after_slow_reply_but_changed_input_does_not(self):
+        self.worker.move_timeout = 60
+        def slow_reply(request):
+            self.camera.move(request)
+            self.clock.now += 0.4
+            self.worker.submit(ControlState(pan=0.5))
+        self.camera.ptz.ContinuousMove.side_effect = slow_reply
+        self.worker.submit(ControlState(pan=0.5))
+        self.assertTrue(self.worker.step())
+        self.assertFalse(self.worker.step())
+        self.clock.now += 0.24
+        self.worker.submit(ControlState(pan=0.5))
+        self.assertFalse(self.worker.step())
+        self.clock.now += 0.02
+        self.assertTrue(self.worker.step())
+        self.worker.submit(ControlState(tilt=0.5))
+        self.assertTrue(self.worker.step())
+        self.assertEqual(self.camera.calls[-1], ('move', (0, 0.5, None)))
+        self.worker.submit(ControlState())
+        self.assertTrue(self.worker.step())
+        self.assertEqual(self.camera.calls[-1], ('stop', True, True))
+
+    def test_zero_ignoring_camera_still_needs_compatibility_mode(self):
+        # HTTP success is not evidence of physical execution. Repetition cannot
+        # fix a device which consistently ignores zero: never auto-enable this mode.
+        self.camera.retains_zero = True
+        self.send(pan=0.5, tilt=0.5)
+        self.send(pan=0.5)
+        self.assertEqual(self.camera.motion, [0.5, 0.5, 0])
+        self.send()
+        self.assertEqual(self.camera.motion, [0, 0, 0])
+
+    def test_default_worker_retains_r8_stop_resume(self):
+        self.camera.retains_zero = True
+        self.worker = PTZCommandWorker(self.camera.ptz, self.camera.imaging,
+                                      'profile', 'source', move_timeout=60, clock=self.clock)
+        self.send(pan=0.5, tilt=0.5)
+        self.send(pan=0.5)
+        self.assertEqual(self.camera.calls[-2:], [('stop', True, False), ('move', (0.5, 0, None))])
+        self.assertEqual(self.camera.motion, [0.5, 0, 0])
 
 
 class ThreadTests(unittest.TestCase):

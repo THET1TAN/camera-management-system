@@ -1,16 +1,19 @@
 # Camera Management System
 
-> Development branch: optional measurement of the PTZ release pause.
-> The validated r8 is on `main`; this draft does not fix the pause yet.
+> Development branch: experimental PTZ r9 direct velocity updates.
+> Run `python camera_viewer_direct_test.py` to test; normal startup keeps the
+> conservative stop/resume mode. Physical smoothness and reliability are unverified.
+> The validated r8 remains on `main` and in the `~v0.2.6` source snapshot.
 > See the [investigation and test procedure](./docs/ptz-release-investigation.md).
 
 Windows desktop application for managing IP cameras, viewing video streams and
 controlling pan, tilt, optical zoom and focus with the keyboard.
 
-## Current version: v0.2.6 — PTZ r8
+## Stable reference: v0.2.6 � PTZ r8
 
-The application sources at the repository root are the current version on `main`.
-An identical source snapshot is kept in [`~v0.2.6/`](./~v0.2.6/).
+The following release description concerns the stable version on `main`.
+Its source snapshot is kept in [`~v0.2.6/`](./~v0.2.6/).
+The PTZ sources at this branch's root include the opt-in r9 experiment.
 See the [release notes](./note_de_version-v0.2.6.txt) for changes and validation.
 
 This version provides:
@@ -77,7 +80,7 @@ Click the PTZ window to give it keyboard focus. Its title identifies
 | Shift / Ctrl | Zoom in / out |
 | Q / E | Focus in / out |
 | M / N | Increase / decrease speed |
-| 1–9 | Preset shortcuts, when supported by the camera's preset tokens |
+| 1�9 | Preset shortcuts, when supported by the camera's preset tokens |
 | Esc | Stop and close the PTZ window |
 
 Hold multiple keys for combined movement. For opposite directions on the same
@@ -181,7 +184,7 @@ Report problems in [GitHub Issues](https://github.com/THET1TAN/camera-management
 with the application revision, reproduction steps and relevant PTZ log entries.
 Do not attach your database, encryption key or camera credentials.
 
-Author: [Joël Smith-Gravel / THET1TAN](https://github.com/THET1TAN).
+Author: [Jo�l Smith-Gravel / THET1TAN](https://github.com/THET1TAN).
 
 ## License
 

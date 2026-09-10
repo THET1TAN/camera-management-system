@@ -52,6 +52,7 @@ class PTZCommandWorker:
     INPUT_LEASE_SECONDS = 0.5
     RETRY_SECONDS = 0.2
     CLOSE_SECONDS = 6.0
+    DIRECT_REFRESH_SECONDS = 0.25
 
     def __init__(self, ptz, imaging, profile_token, source_token,
                  move_timeout=None, clock=time.monotonic, diagnostics=None, velocity_spaces=None,
@@ -65,6 +66,10 @@ class PTZCommandWorker:
         self.diagnostics = diagnostics
         self.velocity_spaces = velocity_spaces or VelocitySpaces()
         self.conservative_stops = conservative_stops
+        # A zero must remain explicit on later refreshes too. Only include
+        # advertised groups, or groups actually used when discovery is absent.
+        self._direct_pan_tilt = self.velocity_spaces.pan_tilt is not None
+        self._direct_zoom = self.velocity_spaces.zoom is not None
         self._last_observed = None
         self._condition = threading.Condition()
         self._desired = ControlState()
@@ -171,6 +176,10 @@ class PTZCommandWorker:
         # Omission leaves that group running on a conforming ONVIF device.
         pan_tilt = motion[:2] != (0, 0) or self.motion[:2] != (0, 0)
         zoom = motion[2] != 0 or self.motion[2] != 0
+        if not self.conservative_stops:
+            self._direct_pan_tilt = self._direct_pan_tilt or pan_tilt
+            self._direct_zoom = self._direct_zoom or zoom
+            pan_tilt, zoom = self._direct_pan_tilt, self._direct_zoom
         sent_at = self.clock()
         try:
             request = self.ptz.create_type('ContinuousMove')
@@ -201,6 +210,13 @@ class PTZCommandWorker:
         # The device's timer starts when it receives the request, not when its
         # response arrives. Slow replies must not postpone the next renewal.
         self._renew_at = sent_at + (self.move_timeout / 3 if self.move_timeout else 0.25)
+        if not self.conservative_stops:
+            # Device Timeout remains native (r8); this is only our refresh rate.
+            # Re-send the latest full vector after a reply, not a stored request.
+            # Changed input bypasses this interval. Slow replies cannot cause a
+            # tight refresh loop unless the native renewal deadline is already due.
+            native_due = sent_at + self.move_timeout / 3 if self.move_timeout else float('inf')
+            self._renew_at = min(native_due, self.clock() + self.DIRECT_REFRESH_SECONDS)
         self._report('PTZ request accepted: pan {:+.1f}, tilt {:+.1f}, zoom {:+.1f}'.format(*motion))
 
     def _ptz_failed(self, operation, error):
