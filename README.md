@@ -1,5 +1,9 @@
 # Camera Management System
 
+> Development branch: optional measurement of the PTZ release pause.
+> The validated r8 is on `main`; this draft does not fix the pause yet.
+> See the [investigation and test procedure](./docs/ptz-release-investigation.md).
+
 Windows desktop application for managing IP cameras, viewing video streams and
 controlling pan, tilt, optical zoom and focus with the keyboard.
 

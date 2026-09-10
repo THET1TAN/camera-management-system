@@ -254,6 +254,9 @@ def main(argv=None):
                            move_timeout=move_timeout, conservative_stops=conservative_stops)
         diagnostics.record('velocity_spaces', **velocity_spaces.summary())
         diagnostics.record('wire_trace', enabled=install_wire_trace(ptz_service, diagnostics))
+        if os.environ.get('CAMERA_PTZ_TRACE_HTTP', '').strip().lower() in ('1', 'true', 'yes', 'on'):
+            from ptz_http_timing import install_http_timing
+            diagnostics.record('http_timing_enabled', enabled=install_http_timing(ptz_service, diagnostics))
     except OSError:
         pass
     command_worker = PTZCommandWorker(ptz_service, imaging_service, media_profile.token,
