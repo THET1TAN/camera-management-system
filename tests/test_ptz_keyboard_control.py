@@ -98,6 +98,7 @@ class CommandTests(unittest.TestCase):
             video_source_token='test-source', PTZSpeed=SimpleNamespace,
             Vector2D=SimpleNamespace, Vector1D=SimpleNamespace, root=self.root,
             speed_value_label=Mock(), speed_progress={}, key_is_down=self.held.__contains__,
+            requested_motion_var=None, ptz_command_var=None,
         )
         self.state = patch.multiple(ptz, create=True, **values)
         self.state.start()
@@ -117,20 +118,90 @@ class CommandTests(unittest.TestCase):
         return (request.Velocity.PanTilt.x, request.Velocity.PanTilt.y,
                 request.Velocity.Zoom.x)
 
+    def simulate_camera_that_keeps_zero_axes(self):
+        # Model the reported symptom: a zero component does not clear a moving
+        # axis until Stop is received. Check physical state, not just requests.
+        self.camera_velocity = [0, 0, 0]
+        self.camera_commands = []
+
+        def move(request):
+            values = (request.Velocity.PanTilt.x, request.Velocity.PanTilt.y,
+                      request.Velocity.Zoom.x)
+            self.camera_commands.append(('move', values))
+            for index, value in enumerate(values):
+                if value != 0:
+                    self.camera_velocity[index] = value
+
+        def stop(request):
+            self.camera_commands.append(('stop', request['PanTilt'], request['Zoom']))
+            if request['PanTilt']:
+                self.camera_velocity[:2] = [0, 0]
+            if request['Zoom']:
+                self.camera_velocity[2] = 0
+
+        self.service.ContinuousMove.side_effect = move
+        self.service.Stop.side_effect = stop
+
+    def test_camera_stops_released_vertical_axis_before_resuming_pan(self):
+        self.simulate_camera_that_keeps_zero_axes()
+        self.press('Down', 40)
+        self.press('Right', 39)
+        self.release('Down', 40)
+        self.assertEqual(self.camera_velocity, [0.5, 0, 0])
+        self.assertEqual(self.camera_commands[-2:], [
+            ('stop', True, False), ('move', (0.5, 0, 0))])
+
+    def test_camera_stops_released_horizontal_axis_before_resuming_tilt(self):
+        self.simulate_camera_that_keeps_zero_axes()
+        self.press('Down', 40)
+        self.press('Right', 39)
+        self.release('Right', 39)
+        self.assertEqual(self.camera_velocity, [0, -0.5, 0])
+
+    def test_camera_stops_zoom_without_stopping_pan_tilt(self):
+        self.simulate_camera_that_keeps_zero_axes()
+        self.press('Down', 40)
+        self.press('Right', 39)
+        self.press('shift', 16)
+        self.release('shift', 16)
+        self.assertEqual(self.camera_velocity, [0.5, -0.5, 0])
+        self.assertEqual(self.camera_commands[-2:], [
+            ('stop', False, True), ('move', (0.5, -0.5, 0))])
+
+    def test_camera_keeps_zoom_when_released_direction_is_stopped(self):
+        self.simulate_camera_that_keeps_zero_axes()
+        self.press('Down', 40)
+        self.press('Right', 39)
+        self.press('shift', 16)
+        self.release('Down', 40)
+        self.assertEqual(self.camera_velocity, [0.5, 0, 0.5])
+        self.assertEqual(self.camera_commands[-2:], [
+            ('stop', True, False), ('move', (0.5, 0, 0.5))])
+
+    def test_camera_recovers_missing_release_with_targeted_stop(self):
+        self.simulate_camera_that_keeps_zero_axes()
+        self.press('Down', 40)
+        self.press('Right', 39)
+        self.held.remove(40)
+        ptz.poll_keyboard()
+        self.assertEqual(self.camera_velocity, [0.5, 0, 0])
+
     def test_down_right_then_release_down_sends_horizontal_only(self):
         self.press('Down', 40)
         self.press('Right', 39)
         self.assertEqual(self.velocity(), (0.5, -0.5, 0))
         self.release('Down', 40)
         self.assertEqual(self.velocity(), (0.5, 0, 0))
-        self.service.Stop.assert_not_called()
+        self.service.Stop.assert_called_once_with({
+            'ProfileToken': 'test-profile', 'PanTilt': True, 'Zoom': False})
 
     def test_down_right_then_release_right_sends_vertical_only(self):
         self.press('Down', 40)
         self.press('Right', 39)
         self.release('Right', 39)
         self.assertEqual(self.velocity(), (0, -0.5, 0))
-        self.service.Stop.assert_not_called()
+        self.service.Stop.assert_called_once_with({
+            'ProfileToken': 'test-profile', 'PanTilt': True, 'Zoom': False})
 
     def test_final_release_sends_explicit_stop_once(self):
         self.press('Right', 39)
@@ -145,7 +216,8 @@ class CommandTests(unittest.TestCase):
         self.held.remove(40)  # Windows key-up state, but no Tk KeyRelease.
         ptz.poll_keyboard()
         self.assertEqual(self.velocity(), (0.5, 0, 0))
-        self.service.Stop.assert_not_called()
+        self.service.Stop.assert_called_once_with({
+            'ProfileToken': 'test-profile', 'PanTilt': True, 'Zoom': False})
         self.root.after.assert_called_with(30, ptz.poll_keyboard)
 
     def test_queued_repeat_cannot_restart_physically_released_key(self):
@@ -162,7 +234,8 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(self.velocity(), (0.5, -0.5, 0.5))
         self.release('shift', 16)
         self.assertEqual(self.velocity(), (0.5, -0.5, 0))
-        self.service.Stop.assert_not_called()
+        self.service.Stop.assert_called_once_with({
+            'ProfileToken': 'test-profile', 'PanTilt': False, 'Zoom': True})
 
     def test_direction_release_preserves_zoom_and_focus(self):
         self.press('s', 83)
@@ -180,6 +253,67 @@ class CommandTests(unittest.TestCase):
         self.press('Right', 39)
         self.press('m', 77)
         self.assertEqual(self.velocity(), (0.6, -0.6, 0))
+        self.service.Stop.assert_not_called()
+
+    def test_failed_targeted_stop_blocks_resume_and_preserves_zoom_state(self):
+        self.press('Down', 40)
+        self.press('Right', 39)
+        self.press('shift', 16)
+        move_count = self.service.ContinuousMove.call_count
+        self.service.Stop.side_effect = [RuntimeError('test timeout'), None]
+        with patch('builtins.print'):
+            self.release('Down', 40)
+        self.assertEqual(self.service.ContinuousMove.call_count, move_count)
+        self.assertIsNone(ptz.current_tilt)
+        self.assertEqual(ptz.current_zoom, 0.5)
+        ptz.poll_keyboard()
+        self.assertEqual(self.velocity(), (0.5, 0, 0.5))
+        self.assertEqual(self.service.Stop.call_count, 2)
+        for stop_call in self.service.Stop.call_args_list:
+            self.assertEqual(stop_call.args[0], {
+                'ProfileToken': 'test-profile', 'PanTilt': True, 'Zoom': False})
+
+    def test_latest_keys_win_if_all_released_after_failed_targeted_stop(self):
+        self.press('Down', 40)
+        self.press('Right', 39)
+        move_count = self.service.ContinuousMove.call_count
+        self.service.Stop.side_effect = [RuntimeError('test timeout'), None]
+        with patch('builtins.print'):
+            self.release('Down', 40)
+        self.release('Right', 39)
+        ptz.poll_keyboard()
+        self.assertEqual(self.service.ContinuousMove.call_count, move_count)
+        self.assertEqual((ptz.current_pan, ptz.current_tilt, ptz.current_zoom), (0, 0, 0))
+
+    def test_targeted_stop_is_not_repeated_for_unchanged_remaining_direction(self):
+        self.press('Down', 40)
+        self.press('Right', 39)
+        self.release('Down', 40)
+        ptz.poll_keyboard()
+        self.press('Right', 39)
+        self.service.Stop.assert_called_once()
+        self.assertEqual(self.service.ContinuousMove.call_count, 3)
+
+    def test_direction_reversal_stops_previous_direction_before_resuming(self):
+        self.simulate_camera_that_keeps_zero_axes()
+        self.press('Left', 37)
+        self.press('Right', 39)
+        self.assertEqual(self.camera_commands[-2:], [
+            ('stop', True, False), ('move', (0.5, 0, 0))])
+        self.release('Right', 39)
+        self.assertEqual(self.camera_commands[-2:], [
+            ('stop', True, False), ('move', (-0.5, 0, 0))])
+
+    def test_display_distinguishes_keyboard_request_from_failed_stop(self):
+        with patch.object(ptz, 'requested_motion_var', Mock()) as requested:
+            with patch.object(ptz, 'ptz_command_var', Mock()) as command:
+                self.press('Down', 40)
+                self.press('Right', 39)
+                self.service.Stop.side_effect = RuntimeError('test timeout')
+                with patch('builtins.print'):
+                    self.release('Down', 40)
+                requested.set.assert_called_with('Keyboard request: pan +0.5, tilt +0.0, zoom +0.0')
+                command.set.assert_called_with('PTZ stop failed; retry pending (see console)')
 
     def test_unchanged_keys_do_not_send_redundant_requests(self):
         self.press('Right', 39)

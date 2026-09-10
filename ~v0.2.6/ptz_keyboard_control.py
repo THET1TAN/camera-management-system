@@ -3,8 +3,11 @@ from tkinter import ttk
 import sys
 
 VERSION = "0.2.6"
+REVISION = 2
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
+requested_motion_var = None
+ptz_command_var = None
 
 # Paramètres de vitesse et mapping des presets
 speed = 0.5
@@ -31,10 +34,30 @@ current_tilt = 0
 current_zoom = 0
 current_focus = 0
 
+
+def axis_needs_stop(previous, requested):
+    """Arrêter un axe relâché/inversé ou dont l'état est inconnu."""
+    return previous is None or (previous != 0 and previous * requested <= 0)
+
+
+def show_ptz_command(message):
+    if ptz_command_var is not None:
+        ptz_command_var.set(message)
+
+
 def start_move(pan, tilt, zoom):
     global current_pan, current_tilt, current_zoom
     if pan == current_pan and tilt == current_tilt and zoom == current_zoom:
         return
+    # Certains appareils conservent une composante précédente malgré un zéro.
+    # ONVIF arrête Pan/Tilt ensemble : arrêter ce groupe, puis reprendre les
+    # directions encore demandées. Ne pas interrompre le zoom sans nécessité.
+    stop_pan_tilt = (axis_needs_stop(current_pan, pan)
+                     or axis_needs_stop(current_tilt, tilt))
+    stop_zoom = axis_needs_stop(current_zoom, zoom)
+    if stop_pan_tilt or stop_zoom:
+        if not stop_move(pan_tilt=stop_pan_tilt, zoom=stop_zoom):
+            return  # Retenter l'arrêt avant toute reprise si la caméra échoue.
     request = ptz_service.create_type('ContinuousMove')
     request.ProfileToken = media_profile.token
     request.Velocity = PTZSpeed()
@@ -43,22 +66,37 @@ def start_move(pan, tilt, zoom):
     try:
         ptz_service.ContinuousMove(request)
         current_pan, current_tilt, current_zoom = pan, tilt, zoom
+        show_ptz_command(f"PTZ request accepted: pan {pan:+.1f}, tilt {tilt:+.1f}, zoom {zoom:+.1f}")
     except Exception as e:
         # La caméra a pu recevoir la commande malgré une réponse perdue.
         # Un état inconnu permet de retenter le mouvement ou son arrêt.
         current_pan = current_tilt = current_zoom = None
+        show_ptz_command("PTZ request failed (see console)")
         print(f"ContinuousMove error: {e}")
 
-def stop_move(force=False):
+def stop_move(force=False, pan_tilt=True, zoom=True):
     global current_pan, current_tilt, current_zoom
-    if not force and current_pan == 0 and current_tilt == 0 and current_zoom == 0:
-        return
+    if not pan_tilt and not zoom:
+        return True
+    if not force and (not pan_tilt or (current_pan == 0 and current_tilt == 0)) and (not zoom or current_zoom == 0):
+        return True
     try:
-        ptz_service.Stop({'ProfileToken': media_profile.token, 'PanTilt': True, 'Zoom': True})
-        current_pan, current_tilt, current_zoom = 0, 0, 0
+        ptz_service.Stop({'ProfileToken': media_profile.token, 'PanTilt': pan_tilt, 'Zoom': zoom})
+        if pan_tilt:
+            current_pan, current_tilt = 0, 0
+        if zoom:
+            current_zoom = 0
+        groups = 'pan/tilt + zoom' if pan_tilt and zoom else ('pan/tilt' if pan_tilt else 'zoom')
+        show_ptz_command(f"PTZ stop accepted: {groups}")
+        return True
     except Exception as e:
-        current_pan = current_tilt = current_zoom = None
+        if pan_tilt:
+            current_pan = current_tilt = None
+        if zoom:
+            current_zoom = None
+        show_ptz_command("PTZ stop failed; retry pending (see console)")
         print(f"Stop error: {e}")
+        return False
 
 def start_focus(focus_speed):
     global current_focus
@@ -171,6 +209,9 @@ def update_move():
     pan = pan * speed if pan != 0 else 0
     tilt = tilt * speed if tilt != 0 else 0
     zoom = zoom * speed if zoom != 0 else 0
+
+    if requested_motion_var is not None:
+        requested_motion_var.set(f"Keyboard request: pan {pan:+.1f}, tilt {tilt:+.1f}, zoom {zoom:+.1f}")
 
     # Un arrêt explicite quand toutes les touches PTZ sont relâchées.
     if pan == 0 and tilt == 0 and zoom == 0:
@@ -299,7 +340,7 @@ class PTZController:
     def update_title_status(self, status=None):
         if status is None:
             status = "In Use" if self.root.focus_get() else "Idle"
-        self.root.title(f"PTZ Control v{VERSION} - Camera {self.camera_id} - {status}")
+        self.root.title(f"PTZ Control v{VERSION} r{REVISION} - Camera {self.camera_id} - {status}")
     
     def on_focus_in(self, event):
         self.update_title_status("In Use")
@@ -316,6 +357,7 @@ class PTZController:
 def main(argv=None):
     global root, ptz_service, imaging_service, media_profile, video_source_token
     global PTZSpeed, Vector2D, Vector1D, speed_value_label, speed_progress, key_is_down
+    global requested_motion_var, ptz_command_var
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 4:
         print("Usage: ptz_keyboard_control.py camera_id ip username password")
@@ -352,6 +394,12 @@ def main(argv=None):
         "Numbers 1-9: Presets\nEsc: Exit"
     ))
     info_label.pack(padx=20, pady=20)
+
+    # Distinguer le relâchement détecté au clavier de la réponse ONVIF.
+    requested_motion_var = tk.StringVar(root, value="Keyboard request: idle")
+    ptz_command_var = tk.StringVar(root, value="PTZ request: idle")
+    tk.Label(root, textvariable=requested_motion_var).pack(padx=20)
+    tk.Label(root, textvariable=ptz_command_var).pack(padx=20)
 
     # Création du frame pour la vitesse
     speed_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)

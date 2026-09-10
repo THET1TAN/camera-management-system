@@ -1,4 +1,4 @@
-# Notes de version - Camera v0.2.6
+# Notes de version - Camera v0.2.6 r2 (en validation)
 
 Date : 2026-09-10
 
@@ -7,6 +7,26 @@ Date : 2026-09-10
 Corriger le contrôle PTZ au clavier lorsque plusieurs touches sont maintenues.
 Exemple attendu : maintenir Bas + Droite, puis relâcher Bas, conserve seulement
 le mouvement vers la droite, sans devoir relâcher et appuyer de nouveau sur Droite.
+
+## Révision 2
+
+La première correction n'a pas résolu le problème lors de l'essai de l'utilisateur
+avec camera_viewer.py à la racine et une nouvelle fenêtre PTZ.
+
+- Lorsqu'une direction est relâchée ou inversée, le contrôleur envoie maintenant
+  un Stop ciblé, attend sa réponse, puis reprend les directions encore demandées.
+  Cette séquence traite le cas d'une caméra qui conserve une ancienne vitesse
+  malgré une composante nulle. Ce comportement matériel est une hypothèse à
+  confirmer sur la caméra de l'utilisateur.
+- ONVIF regroupe Pan et Tilt pour l'arrêt : le mouvement restant peut donc subir
+  une brève pause pendant l'arrêt/reprise. Aucune temporisation n'est ajoutée.
+  Le zoom reste indépendant et n'est arrêté que si nécessaire.
+- Si le Stop échoue, aucune reprise n'est envoyée avant une nouvelle tentative
+  réussie. Cette tentative utilise les touches encore maintenues à ce moment.
+- Le titre affiche v0.2.6 r2. Deux lignes distinguent la demande issue du clavier
+  de la réponse à la commande PTZ. Une réponse acceptée ne confirme pas le
+  mouvement physique de la caméra.
+- La PR #3 reste en brouillon; main reste sur la version précédente.
 
 ## Corrections
 
@@ -26,7 +46,7 @@ le mouvement vers la droite, sans devoir relâcher et appuyer de nouveau sur Dro
   En cas d'erreur, les mises à jour suivantes peuvent retenter la commande ou
   son arrêt, au lieu de considérer la caméra déjà arrêtée.
 - L'aide indique correctement Shift pour zoomer et Ctrl pour dézoomer.
-- La fenêtre PTZ affiche la version v0.2.6.
+- La fenêtre PTZ affiche la version v0.2.6 r2.
 
 ## Organisation
 
@@ -41,20 +61,26 @@ le mouvement vers la droite, sans devoir relâcher et appuyer de nouveau sur Dro
 
 ## Validation effectuée
 
-- 27 tests automatisés réussis sous Python 3.14, avec services ONVIF simulés.
+- 37 tests automatisés réussis sous Python 3.14, avec services ONVIF simulés.
+- Cinq scénarios avec un simulateur conservant les anciennes vitesses nulles
+  échouent avec la révision 1 et passent avec la révision 2. Ils couvrent les deux
+  relâchements d'une diagonale, le zoom et un événement de relâchement manqué.
+- Arrêts ciblés, ordre arrêt/reprise, erreurs d'arrêt, changements de touches
+  pendant une erreur et affichage de diagnostic également vérifiés.
 - Diagonales dans toutes les directions et dans les deux ordres de relâchement,
   combinaisons avec zoom/focus, répétitions, touches équivalentes et opposées,
   relâchement manqué, perte de focus, fermeture et erreurs réseau simulées.
 - Démarrage et fermeture d'une vraie fenêtre Tk masquée, avec caméra simulée :
   liaisons clavier, lecteur d'état Win32 et titre de version vérifiés.
 - Syntaxe des sources Python et des tests vérifiée pour Python 3.9.
-- Aucun essai sur caméra physique effectué dans cette session.
+- La révision 2 doit encore être validée sur la caméra physique de l'utilisateur.
 
 Commande de test : python -m unittest discover -s tests -v
 
 ## Vérification sur caméra
 
-1. Lancer camera_viewer.py depuis la racine et ouvrir le contrôle PTZ.
+1. Fermer toute fenêtre PTZ existante, lancer camera_viewer.py depuis la racine
+   et ouvrir le contrôle PTZ. Vérifier la mention v0.2.6 r2 dans le titre.
 2. Maintenir Bas + Droite, relâcher Bas : seule la droite doit continuer.
 3. Refaire l'essai en relâchant Droite : seule la descente doit continuer.
 4. Essayer les autres diagonales, puis ajouter Shift ou Ctrl et relâcher une
@@ -62,6 +88,9 @@ Commande de test : python -m unittest discover -s tests -v
 5. Relâcher toutes les touches : les mouvements doivent s'arrêter.
 6. Pendant un mouvement, changer de fenêtre, puis essayer Échap et la croix
    de fermeture : la caméra doit s'arrêter à chaque fois.
+7. Si le problème persiste, relever les lignes Keyboard request et PTZ request
+   lorsque Bas est relâché : tilt doit être +0.0 tandis que pan reste +0.5
+   à la vitesse initiale. Relever aussi une éventuelle erreur de Stop affichée.
 
 Références techniques :
 - ONVIF PTZ, vitesse nulle par axe :

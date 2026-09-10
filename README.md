@@ -2,7 +2,7 @@
 
 A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
 
-## Current version: v0.2.6
+## Test version: v0.2.6 r2
 
 Keyboard PTZ control now tracks each held key independently. For example, hold
 Down + Right, then release Down: the camera receives a horizontal-only command
@@ -11,8 +11,19 @@ missed release events. Releasing all PTZ keys sends an explicit ONVIF stop;
 leaving the control window or closing it clears all held controls and requests
 both PTZ and focus stops.
 
+When an axis is released or reversed, revision 2 explicitly stops its ONVIF
+group before resuming the remaining directions. This also handles devices that
+keep an old velocity when sent a zero component. Pan and tilt share one stop
+group, so that transition can cause a brief pause; zoom is stopped separately.
+The window displays the keyboard request and whether the PTZ command was accepted
+or failed. An accepted command does not confirm the camera's physical movement.
+
+Close the PTZ window and reopen it to load this revision. Its title must contain
+`v0.2.6 r2`. This version is awaiting camera validation in
+[PR #3](https://github.com/THET1TAN/camera-management-system/pull/3).
+
 The current source files are at the repository root, with an identical source
-snapshot in [`~v0.2.6/`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.6). See the
+snapshot in [`~v0.2.6/`](https://github.com/THET1TAN/camera-management-system/tree/fix/ptz-keyboard-v0.2.6/~v0.2.6). See the
 [release notes and camera verification steps](./note_de_version-v0.2.6.txt).
 Camera databases, logs and generated executables are not part of the snapshot.
 
