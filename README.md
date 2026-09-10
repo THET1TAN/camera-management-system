@@ -2,20 +2,6 @@
 
 A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
 
-## Current version: v0.2.6
-
-Keyboard PTZ control now tracks each held key independently. For example, hold
-Down + Right, then release Down: the camera receives a horizontal-only command
-while Right remains held. Windows also checks held keys every 30 ms to recover
-missed release events. Releasing all PTZ keys sends an explicit ONVIF stop;
-leaving the control window or closing it clears all held controls and requests
-both PTZ and focus stops.
-
-The current source files are at the repository root, with an identical source
-snapshot in [`~v0.2.6/`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.6). See the
-[release notes and camera verification steps](./note_de_version-v0.2.6.txt).
-Camera databases, logs and generated executables are not part of the snapshot.
-
 ## ✨ Features
 
 - **🔐 Secure Credential Management**: Encrypted storage of camera credentials using Fernet encryption
@@ -37,7 +23,7 @@ Camera databases, logs and generated executables are not part of the snapshot.
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/THET1TAN/camera-management-system.git
+   git clone https://github.com/yourusername/camera-management-system.git
    cd camera-management-system
    ```
 
@@ -80,26 +66,11 @@ Control camera movement with keyboard shortcuts:
 | Key | Action |
 |-----|--------|
 | `W/A/S/D` or `Arrow Keys` | Pan and Tilt |
-| `Shift/Ctrl` | Zoom In/Out |
+| `Ctrl/Shift` | Zoom In/Out |
 | `Q/E` | Focus In/Out |
 | `M/N` | Increase/Decrease Speed |
 | `1-9` | Camera Presets |
 | `ESC` | Exit |
-
-Multiple directions, zoom and focus can be held together. Opposite keys on the
-same axis use the most recently pressed key; releasing it resumes the other key
-if it is still held. Keyboard auto-repeat does not change that priority.
-
-### Tests
-
-Run the keyboard and simulated ONVIF regression tests without connecting a camera:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Tests use Python's standard library and Tkinter. The physical camera still needs
-the short verification procedure in the release notes to confirm its response.
 
 ## 🏗️ Architecture
 
@@ -133,9 +104,10 @@ CREATE TABLE cameras (
 ### Encryption Key
 The application uses a predefined encryption key. For production use, consider implementing user-specific keys:
 
-Keep the encryption key private. Changing it requires migrating the existing
-encrypted camera database; replacing it directly prevents existing credentials
-from being decrypted.
+```python
+# Current implementation (camera_manager.py)
+ENCRYPTION_KEY = b'g4ZltE3Vv2Xzq5y6Lq3l4f8Ozt2Ck2Tk6v5b0rN2ghE='
+```
 
 ### Python Version Management
 The application automatically detects and uses Python 3.9 for ONVIF operations:

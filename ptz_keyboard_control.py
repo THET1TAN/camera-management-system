@@ -1,10 +1,32 @@
+import os
 import tkinter as tk
 from tkinter import ttk
+from onvif import ONVIFCamera
 import sys
+import time
 
-VERSION = "0.2.6"
-KEY_POLL_INTERVAL_MS = 30
-key_is_down = None
+# Get command line arguments
+if len(sys.argv) != 5:
+    print("Usage: script.py camera_id ip username password")
+    sys.exit(1)
+
+camera_id = sys.argv[1]
+camera_ip = sys.argv[2]
+username = sys.argv[3]
+password = sys.argv[4]
+
+# Connexion à la caméra ONVIF
+try:
+    camera = ONVIFCamera(camera_ip, 80, username, password)
+    media_service = camera.create_media_service()
+    ptz_service = camera.create_ptz_service()
+    imaging_service = camera.create_imaging_service()
+except Exception as e:
+    print(f"Error connecting to camera: {e}")
+    sys.exit(1)
+
+media_profile = media_service.GetProfiles()[0]
+video_source_token = media_profile.VideoSourceConfiguration.SourceToken
 
 # Paramètres de vitesse et mapping des presets
 speed = 0.5
@@ -31,10 +53,16 @@ current_tilt = 0
 current_zoom = 0
 current_focus = 0
 
+# Chargement des types complexes ONVIF
+PTZSpeed = ptz_service.zeep_client.wsdl.types.get_type('{http://www.onvif.org/ver10/schema}PTZSpeed')
+Vector2D = ptz_service.zeep_client.wsdl.types.get_type('{http://www.onvif.org/ver10/schema}Vector2D')
+Vector1D = ptz_service.zeep_client.wsdl.types.get_type('{http://www.onvif.org/ver10/schema}Vector1D')
+
 def start_move(pan, tilt, zoom):
     global current_pan, current_tilt, current_zoom
     if pan == current_pan and tilt == current_tilt and zoom == current_zoom:
         return
+    current_pan, current_tilt, current_zoom = pan, tilt, zoom
     request = ptz_service.create_type('ContinuousMove')
     request.ProfileToken = media_profile.token
     request.Velocity = PTZSpeed()
@@ -42,124 +70,123 @@ def start_move(pan, tilt, zoom):
     request.Velocity.Zoom = Vector1D(x=zoom)
     try:
         ptz_service.ContinuousMove(request)
-        current_pan, current_tilt, current_zoom = pan, tilt, zoom
     except Exception as e:
-        # La caméra a pu recevoir la commande malgré une réponse perdue.
-        # Un état inconnu permet de retenter le mouvement ou son arrêt.
-        current_pan = current_tilt = current_zoom = None
         print(f"ContinuousMove error: {e}")
 
-def stop_move(force=False):
+def stop_move():
     global current_pan, current_tilt, current_zoom
-    if not force and current_pan == 0 and current_tilt == 0 and current_zoom == 0:
+    if current_pan == 0 and current_tilt == 0 and current_zoom == 0:
         return
+    current_pan, current_tilt, current_zoom = 0, 0, 0
     try:
-        ptz_service.Stop({'ProfileToken': media_profile.token, 'PanTilt': True, 'Zoom': True})
-        current_pan, current_tilt, current_zoom = 0, 0, 0
+        ptz_service.Stop({'ProfileToken': media_profile.token})
     except Exception as e:
-        current_pan = current_tilt = current_zoom = None
         print(f"Stop error: {e}")
 
 def start_focus(focus_speed):
     global current_focus
     if focus_speed == current_focus:
         return
+    current_focus = focus_speed
     request = imaging_service.create_type('Move')
     request.VideoSourceToken = video_source_token
     request.Focus = {'Continuous': {'Speed': focus_speed}}
     try:
         imaging_service.Move(request)
-        current_focus = focus_speed
     except Exception as e:
-        current_focus = None
         print(f"Focus move error: {e}")
 
-def stop_focus(force=False):
+def stop_focus():
     global current_focus
-    if not force and current_focus == 0:
+    if current_focus == 0:
         return
+    current_focus = 0
     request = imaging_service.create_type('Stop')
     request.VideoSourceToken = video_source_token
     try:
         imaging_service.Stop(request)
-        current_focus = 0
     except Exception as e:
-        current_focus = None
         print(f"Focus stop error: {e}")
 
 class KeyboardManager:
-    """Recalcule chaque axe à partir des touches physiques encore maintenues."""
-
-    AXES = (
-        {'a': -1, 'left': -1, 'd': 1, 'right': 1},
-        {'w': 1, 'up': 1, 's': -1, 'down': -1},
-        {'shift': 1, 'shift_l': 1, 'shift_r': 1,
-         'ctrl': -1, 'control_l': -1, 'control_r': -1},
-        {'q': 1, 'e': -1},
-    )
-
     def __init__(self):
-        # L'ordre d'insertion conserve la priorité du dernier appui réel.
-        self.pressed_keys = {}
+        self.keys = {
+            'horizontal': {'keys': {'left': ['a', 'left'], 'right': ['d', 'right']}, 'state': {'left': False, 'right': False}, 'last_direction': None},
+            'vertical': {'keys': {'up': ['w', 'up'], 'down': ['s', 'down']}, 'state': {'up': False, 'down': False}, 'last_direction': None},
+            'zoom': {'keys': {'in': ['shift'], 'out': ['ctrl']}, 'state': {'in': False, 'out': False}, 'last_direction': None},
+            'focus': {'keys': {'in': ['q'], 'out': ['e']}, 'state': {'in': False, 'out': False}, 'last_direction': None}  # Ajout du focus
+        }
+        self.last_command = {'pan': 0, 'tilt': 0, 'zoom': 0, 'focus': 0}
+        self.last_update = time.time()
 
-    def press_key(self, key, keycode=None):
-        key = key.lower()
-        if not any(key in axis for axis in self.AXES):
-            return False
-        identity = keycode if keycode is not None else key
-        if identity in self.pressed_keys:
-            return False  # Ignorer la répétition automatique du clavier.
-        self.pressed_keys[identity] = key
-        return True
+    def _get_direction(self, key, axis):
+        for direction, key_list in self.keys[axis]['keys'].items():
+            if key in key_list:
+                return direction
+        return None
 
-    def release_key(self, key, keycode=None):
-        # Le code physique reste stable même si Shift/Ctrl change le keysym.
-        identity = keycode if keycode is not None else key.lower()
-        return self.pressed_keys.pop(identity, None) is not None
+    def press_key(self, key):
+        for axis in self.keys:
+            direction = self._get_direction(key, axis)
+            if direction:
+                self.keys[axis]['state'][direction] = True
+                self.keys[axis]['last_direction'] = direction
+                return True
+        return False
 
-    def synchronize(self, is_down):
-        """Récupère les relâchements manqués sans activer de nouvelles touches."""
-        if is_down is None:
-            return
-        for keycode in list(self.pressed_keys):
-            if isinstance(keycode, int) and not is_down(keycode):
-                del self.pressed_keys[keycode]
-
-    def clear(self):
-        self.pressed_keys.clear()
-
-    def _axis_value(self, axis):
-        for key in reversed(list(self.pressed_keys.values())):
-            if key in axis:
-                return axis[key]
-        return 0
+    def release_key(self, key):
+        for axis in self.keys:
+            direction = self._get_direction(key, axis)
+            if direction:
+                self.keys[axis]['state'][direction] = False
+                # Si c'était la dernière direction active, réinitialiser last_direction
+                if not any(self.keys[axis]['state'].values()):
+                    self.keys[axis]['last_direction'] = None
+                elif self.keys[axis]['last_direction'] == direction:
+                    # Trouver la nouvelle direction active s'il y en a une
+                    active_directions = [d for d, state in self.keys[axis]['state'].items() if state]
+                    self.keys[axis]['last_direction'] = active_directions[0] if active_directions else None
+                # Ajouter une mise à jour de la timestamp pour forcer la réévaluation
+                self.last_update = time.time()
+                return True
+        return False
 
     def get_movement(self):
-        return tuple(self._axis_value(axis) for axis in self.AXES[:3])
+        pan = tilt = zoom = 0
+        
+        # Gestion horizontale (pan)
+        if self.keys['horizontal']['last_direction'] == 'left':
+            pan = -1
+        elif self.keys['horizontal']['last_direction'] == 'right':
+            pan = 1
+
+        # Gestion verticale (tilt)
+        if self.keys['vertical']['last_direction'] == 'up':
+            tilt = 1
+        elif self.keys['vertical']['last_direction'] == 'down':
+            tilt = -1
+
+        # Gestion zoom
+        if self.keys['zoom']['last_direction'] == 'in':
+            zoom = 1
+        elif self.keys['zoom']['last_direction'] == 'out':
+            zoom = -1
+
+        # Mettre à jour la dernière commande si elle est différente
+        current_command = {'pan': pan, 'tilt': tilt, 'zoom': zoom}
+        if current_command != self.last_command:
+            self.last_command = current_command
+            self.last_update = time.time()
+
+        return pan, tilt, zoom
 
     def get_focus(self):
-        return self._axis_value(self.AXES[3])
-
-
-def create_key_state_reader():
-    """Sous Windows, Tk utilise les codes de touches virtuelles Win32."""
-    if sys.platform != 'win32':
-        return None
-    import ctypes
-    get_state = ctypes.WinDLL('user32').GetAsyncKeyState
-    get_state.argtypes = [ctypes.c_int]
-    get_state.restype = ctypes.c_short
-    # Seul le bit de poids fort indique une touche actuellement enfoncée.
-    return lambda keycode: bool(get_state(keycode) & 0x8000)
-
-
-def event_keycode(event):
-    if sys.platform == 'win32':
-        # Tk peut utiliser le code générique pour les deux côtés.
-        modifiers = {'shift_l': 0xA0, 'shift_r': 0xA1,
-                     'control_l': 0xA2, 'control_r': 0xA3}
-        return modifiers.get(event.keysym.lower(), event.keycode)
-    return event.keycode
+        focus = 0
+        if self.keys['focus']['state']['in']:
+            focus = 1
+        elif self.keys['focus']['state']['out']:
+            focus = -1
+        return focus
 
 # Remplacer la variable keys_pressed par une instance de KeyboardManager
 keyboard = KeyboardManager()
@@ -172,12 +199,11 @@ def update_move():
     tilt = tilt * speed if tilt != 0 else 0
     zoom = zoom * speed if zoom != 0 else 0
 
-    # Un arrêt explicite quand toutes les touches PTZ sont relâchées.
-    if pan == 0 and tilt == 0 and zoom == 0:
-        stop_move()
-    else:
-        # Le vecteur complet met à zéro les seuls axes relâchés.
+    # N'envoie la commande que si il y a un changement réel
+    if pan != current_pan or tilt != current_tilt or zoom != current_zoom:
         start_move(pan, tilt, zoom)
+    elif pan == 0 and tilt == 0 and zoom == 0 and (current_pan != 0 or current_tilt != 0 or current_zoom != 0):
+        stop_move()
 
 def update_focus():
     # Obtenir l'état du focus depuis le gestionnaire de clavier
@@ -216,17 +242,10 @@ def on_key_press(event):
     global speed
     key = event.keysym.lower()
 
-    if key == 'escape':
-        close_controller()
-        return
-
-    keycode = event_keycode(event)
-    keyboard.synchronize(key_is_down)
-    if key_is_down is not None and not key_is_down(keycode):
-        # Ne pas rejouer un ancien appui resté en attente pendant un appel réseau.
-        update_move()
-        update_focus()
-        return
+    if key in ('control_l', 'control_r'):
+        key = 'ctrl'
+    if key in ('shift_l', 'shift_r'):
+        key = 'shift'
 
     if key == 'm':
         increase_speed()
@@ -256,34 +275,30 @@ def on_key_press(event):
             print(f"Aller au preset {key}")
         except Exception as e:
             print(f"Erreur preset {key}: {e}")
+    elif key == 'escape':
+        stop_move()
+        stop_focus()
+        root.quit()
     else:
-        keyboard.press_key(key, keycode)
+        keyboard.press_key(key)
         update_move()
         update_focus()
 
 def on_key_release(event):
-    keyboard.release_key(event.keysym, event_keycode(event))
-    keyboard.synchronize(key_is_down)
+    key = event.keysym.lower()
+
+    if key in ('control_l', 'control_r'):
+        key = 'ctrl'
+    elif key in ('shift_l', 'shift_r'):
+        key = 'shift'
+
+    keyboard.release_key(key)
     update_move()
     update_focus()
+    root.update_idletasks()
 
-
-def poll_keyboard():
-    keyboard.synchronize(key_is_down)
-    update_move()
-    update_focus()
-    root.after(KEY_POLL_INTERVAL_MS, poll_keyboard)
-
-
-def release_all_controls(force=False):
-    keyboard.clear()
-    stop_move(force=force)
-    stop_focus(force=force)
-
-
-def close_controller():
-    release_all_controls(force=True)
-    root.quit()
+# Création de la fenêtre Tkinter
+root = tk.Tk()
 
 class PTZController:
     def __init__(self, root, camera_id, camera_ip):
@@ -299,91 +314,46 @@ class PTZController:
     def update_title_status(self, status=None):
         if status is None:
             status = "In Use" if self.root.focus_get() else "Idle"
-        self.root.title(f"PTZ Control v{VERSION} - Camera {self.camera_id} - {status}")
+        self.root.title(f"PTZ Control - Camera {self.camera_id} - {status}")
     
     def on_focus_in(self, event):
         self.update_title_status("In Use")
     
     def on_focus_out(self, event):
-        self.root.after_idle(self.check_focus)
+        self.update_title_status("Idle")
 
-    def check_focus(self):
-        # Un transfert du focus entre widgets de cette fenêtre reste actif.
-        if self.root.focus_get() is None:
-            release_all_controls(force=True)
-            self.update_title_status("Idle")
+controller = PTZController(root, camera_id, camera_ip)
 
-def main(argv=None):
-    global root, ptz_service, imaging_service, media_profile, video_source_token
-    global PTZSpeed, Vector2D, Vector1D, speed_value_label, speed_progress, key_is_down
-    argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 4:
-        print("Usage: ptz_keyboard_control.py camera_id ip username password")
-        return 1
-    camera_id, camera_ip, username, password = argv
-    from onvif import ONVIFCamera
-    try:
-        camera = ONVIFCamera(camera_ip, 80, username, password)
-        media_service = camera.create_media_service()
-        ptz_service = camera.create_ptz_service()
-        imaging_service = camera.create_imaging_service()
-        media_profile = media_service.GetProfiles()[0]
-        video_source_token = media_profile.VideoSourceConfiguration.SourceToken
-        get_type = ptz_service.zeep_client.wsdl.types.get_type
-        PTZSpeed = get_type('{http://www.onvif.org/ver10/schema}PTZSpeed')
-        Vector2D = get_type('{http://www.onvif.org/ver10/schema}Vector2D')
-        Vector1D = get_type('{http://www.onvif.org/ver10/schema}Vector1D')
-    except Exception as e:
-        print(f"Error connecting to camera: {e}")
-        return 1
+info_label = tk.Label(root, text=(
+    "PTZ Camera Control\n"
+    "Click on this window to give it focus.\n"
+    "Commands only work when this window is active.\n\n"
+    "M/N: Increase/Decrease speed\n"
+    "Q/E: Focus in/out\nW/S/A/D or Arrows: Pan/Tilt\nCtrl/Shift: Zoom in/out\n"
+    "Numbers 1-9: Presets\nEsc: Exit"
+))
+info_label.pack(padx=20, pady=20)
 
-    key_is_down = create_key_state_reader()
-    keyboard.clear()
-    root = tk.Tk()
-    controller = PTZController(root, camera_id, camera_ip)
+# Création du frame pour la vitesse
+speed_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)
+speed_frame.pack(padx=20, pady=10)
 
+#speed_label = tk.Label(speed_frame, text=f"Vitesse actuelle: {speed:.1f}", font=('Helvetica', 12, 'bold'))
+#speed_label.pack(padx=10, pady=10)
 
-    info_label = tk.Label(root, text=(
-        "PTZ Camera Control\n"
-        "Click on this window to give it focus.\n"
-        "Commands only work when this window is active.\n\n"
-        "M/N: Increase/Decrease speed\n"
-        "Q/E: Focus in/out\nW/S/A/D or Arrows: Pan/Tilt\nShift/Ctrl: Zoom in/out\n"
-        "Numbers 1-9: Presets\nEsc: Exit"
-    ))
-    info_label.pack(padx=20, pady=20)
+speed_text_label = tk.Label(speed_frame, text="Current speed:", font=('Helvetica', 12))
+speed_text_label.pack(side=tk.LEFT, padx=10, pady=10)
 
-    # Création du frame pour la vitesse
-    speed_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)
-    speed_frame.pack(padx=20, pady=10)
+speed_value_label = tk.Label(speed_frame, text=f"{speed:.1f}", font=('Helvetica', 12, 'bold'))
+speed_value_label.pack(side=tk.LEFT, padx=10, pady=10)
 
-    #speed_label = tk.Label(speed_frame, text=f"Vitesse actuelle: {speed:.1f}", font=('Helvetica', 12, 'bold'))
-    #speed_label.pack(padx=10, pady=10)
+# Création de la barre de progression pour la vitesse
+speed_progress = ttk.Progressbar(speed_frame, orient="horizontal", length=200, mode="determinate")
+speed_progress.pack(side=tk.LEFT, padx=10, pady=10)
+speed_progress['value'] = (speed - min_speed) / (max_speed - min_speed) * 100
 
-    speed_text_label = tk.Label(speed_frame, text="Current speed:", font=('Helvetica', 12))
-    speed_text_label.pack(side=tk.LEFT, padx=10, pady=10)
+root.bind("<KeyPress>", on_key_press)
+root.bind("<KeyRelease>", on_key_release)
 
-    speed_value_label = tk.Label(speed_frame, text=f"{speed:.1f}", font=('Helvetica', 12, 'bold'))
-    speed_value_label.pack(side=tk.LEFT, padx=10, pady=10)
-
-    # Création de la barre de progression pour la vitesse
-    speed_progress = ttk.Progressbar(speed_frame, orient="horizontal", length=200, mode="determinate")
-    speed_progress.pack(side=tk.LEFT, padx=10, pady=10)
-    speed_progress['value'] = (speed - min_speed) / (max_speed - min_speed) * 100
-
-    root.bind("<KeyPress>", on_key_press)
-    root.bind("<KeyRelease>", on_key_release)
-
-    print("Window ready. Click on the window to select it, then use the indicated keys.")
-    root.protocol("WM_DELETE_WINDOW", close_controller)
-    root.after(KEY_POLL_INTERVAL_MS, poll_keyboard)
-    try:
-        root.mainloop()
-    finally:
-        release_all_controls(force=True)
-        root.destroy()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+print("Window ready. Click on the window to select it, then use the indicated keys.")
+root.mainloop()

@@ -40,7 +40,3 @@ vlc-log.txt
 # OS specific
 .DS_Store
 Thumbs.db
-
-# Local release preparation and backup files
-.release-work/
-*.back
