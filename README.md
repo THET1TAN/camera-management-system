@@ -1,278 +1,185 @@
-# 📹 Camera Management System
+# Camera Management System
 
-A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
+Windows desktop application for managing IP cameras, viewing video streams and
+controlling pan, tilt, optical zoom and focus with the keyboard.
 
-## Test version: v0.2.6 r8
+## Current version: v0.2.6 — PTZ r8
 
-Keyboard PTZ control tracks each held physical key independently and recovers
-missed release events under Windows. A single background worker keeps only the
-latest complete input state and rereads it after each network response. Rapid
-changes cannot build a queue of obsolete movements.
+The application sources at the repository root are the current version on `main`.
+An identical source snapshot is kept in [`~v0.2.6/`](./~v0.2.6/).
+See the [release notes](./note_de_version-v0.2.6.txt) for changes and validation.
 
-Revision 8 restores targeted Stop before resuming held axes on a release or
-reversal. The direct zero-velocity transitions tried in r7 reintroduced a held
-direction on the reported camera. Stop remains the default for compatibility.
-Pan and tilt share a stop group; the resulting pause remains, with Stop responses
-of about 220–270 ms measured in the r6 trace. Devices verified to honor zero
-velocity can opt into direct transitions with `CAMERA_PTZ_CONSERVATIVE_STOPS=0`.
+This version provides:
 
-Pan/tilt and zoom are sent together in ContinuousMove, using velocity spaces and
-signed ranges advertised by the camera. Revision 8 prefers the declared native
-movement timeout when it is within the advertised range. On the configured
-camera this is 60 seconds, instead of the one-second timeout imposed by previous
-revisions. An unchanged command is renewed after one third of its duration,
-measured from transmission time. Changed input is sent immediately, independently
-of this renewal schedule. Missing valid defaults fall back to a supported short
-duration, or the implicit device default if capabilities cannot be read.
+- Independent tracking of held keys, including diagonals combined with zoom.
+- Recovery of missed key releases on Windows and replacement of obsolete requests
+  during rapid direction changes.
+- ONVIF velocity spaces, speed ranges and movement timeouts selected from the
+  camera's advertised capabilities, without a manufacturer-specific PTZ branch.
+- Explicit stops on release, loss of focus and shutdown.
+- Cascading closure of video players, PTZ windows and Camera Manager when their
+  parent Camera Viewer closes.
+- Local camera configuration in SQLite, with credentials encrypted using Fernet.
 
-Complete release, loss of focus, shutdown and stale keyboard input still request
-an explicit Stop immediately; they do not wait for the movement timeout. If the
-network prevents Stop from reaching the camera, its last accepted movement may
-continue until that timeout (60 seconds on the reported device).
+The r8 camera test confirmed sustained zoom with a diagonal and correct direction
+releases. **A short pause remains when releasing one direction of a diagonal.**
+Pan and tilt share an ONVIF stop group; omitting that stop reintroduced stuck
+movement on the tested camera. Further work on this pause is kept separate from
+this validated version. Compatibility with other devices still needs testing.
 
-The user confirms that r8 keeps zoom running during a diagonal hold and correctly
-stops released directions. The transition pause remains. With r6/r7, zoom stopped after about one second
-in either direction before its physical limit. TinyCam configured for ONVIF
-Profile S can combine lateral movement and optical zoom on the same camera,
-confirmed in Camera Viewer's image. Its exact requests are unknown. The native
-timeout in r8 removes the one-second expiry implicated by the successful user test.
-GetStatus did not provide usable feedback, so internal firmware behavior is not measured.
+## Installation
 
-Closing Camera Viewer closes its players, PTZ controllers and Camera Manager
-windows, including their children. PTZ requests its stops before exiting. Tk
-remains responsive; an unresponsive owned child is terminated after 10 seconds.
-Windows launched independently remain independent.
+Requirements:
 
-The local bounded `ptz_control_<process-id>.log` records requested axes, serialized
-velocity fields, request duration and results, without camera addresses,
-credentials, profile tokens or SOAP payloads. No diagnostic text or gamepad
-support is added to the interface.
+- Windows and Python 3.9 or newer, including Tkinter.
+- VLC installed with the same architecture as Python for video playback.
+- Network access to the camera and ONVIF enabled. The current controller connects
+  to the camera's ONVIF service on port 80.
 
-114 automated tests pass, including simulated cameras that ignore zero velocity,
-latest-state handling during slow replies, native-timeout holds and prompt stops.
-Real ONVIF/Zeep serialization is checked offline. Hardware results above apply to
-the tested camera; other devices still need validation.
-See [ONVIF PTZ](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v250a.pdf).
-
-Close old PTZ windows, launch `python camera_viewer.py` from the root and open a
-controller marked `v0.2.6 r8`. Hold a diagonal with Shift/Ctrl for at least five
-seconds, then release each key individually. Restart all Viewer/Manager windows
-if you have not loaded the parent/child lifetime changes yet.
-
-The root and `~v0.2.6/` contain identical source files, available in
-[PR #3](https://github.com/THET1TAN/camera-management-system/pull/3), kept as a draft.
-Main is unchanged. No executable has been rebuilt. Camera databases, local keys,
-logs and generated executables are excluded from the source snapshot.
-See [release notes](./note_de_version-v0.2.6.txt).
-
-## ✨ Features
-
-- **🔐 Secure Credential Management**: Encrypted storage of camera credentials using Fernet encryption
-- **📺 Camera Viewer**: Browse and play camera streams with an intuitive GUI
-- **🎮 PTZ Control**: Real-time Pan-Tilt-Zoom control with keyboard shortcuts
-- **🔧 Camera Manager**: Add, edit, and delete camera configurations
-- **📡 ONVIF Support**: Standard camera services, subject to the capabilities supported by each device
-- **💾 SQLite Database**: Lightweight local database for camera storage
-- **🖱️ User-Friendly Interface**: Clean Tkinter-based GUI for all operations
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.9+ (recommended for optimal ONVIF compatibility)
-- Windows OS (current implementation)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/THET1TAN/camera-management-system.git
-   cd camera-management-system
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Run the application**
-   ```bash
-   python camera_viewer.py
-   ```
-
-## 📋 Usage
-
-### Camera Viewer
-Launch the main application to view and manage your cameras:
-```bash
-python camera_viewer.py
+```powershell
+git clone https://github.com/THET1TAN/camera-management-system.git
+cd camera-management-system
+python -m pip install -r requirements.txt
 ```
 
-- **View Cameras**: Browse all configured cameras
-- **Play Stream**: Click "Play" to start camera stream
-- **PTZ Control**: Click "PTZ" for cameras with pan-tilt-zoom capabilities
-- **Manage**: Access camera management interface
+For a **new installation**, initialize the database and add a camera first:
 
-### Camera Manager
-Add and configure new cameras:
-```bash
+```powershell
 python camera_manager.py
 ```
 
-- **Add Camera**: Configure IP, username, password, and PTZ capabilities
-- **Edit Camera**: Modify existing camera settings
-- **Delete Camera**: Remove cameras from the system
+Enter the camera address and credentials, enable PTZ if supported, and save.
+Then launch the viewer:
 
-### PTZ Control
-Control camera movement with keyboard shortcuts:
+```powershell
+python camera_viewer.py
+```
+
+The viewer offers video playback, PTZ control and access to Camera Manager.
+Close existing application windows before upgrading so new windows use the same
+source version. No rebuilt executable is included in this release; use the Python
+sources. If Python 3.9 is installed, child scripts may select it automatically;
+install the dependencies for that interpreter as well.
+
+## Keyboard PTZ controls
+
+Click the PTZ window to give it keyboard focus. Its title identifies
+`v0.2.6 r8`. Controls apply only while that window is active.
 
 | Key | Action |
-|-----|--------|
-| `W/A/S/D` or `Arrow Keys` | Pan and Tilt |
-| `Shift/Ctrl` | Zoom In/Out |
-| `Q/E` | Focus In/Out |
-| `M/N` | Increase/Decrease Speed |
-| `1-9` | Camera Presets |
-| `ESC` | Exit |
+| --- | --- |
+| W / S or Up / Down | Tilt up / down |
+| A / D or Left / Right | Pan left / right |
+| Shift / Ctrl | Zoom in / out |
+| Q / E | Focus in / out |
+| M / N | Increase / decrease speed |
+| 1–9 | Preset shortcuts, when supported by the camera's preset tokens |
+| Esc | Stop and close the PTZ window |
 
-Multiple directions, zoom and focus can be held together. Opposite keys on the
-same axis use the most recently pressed key; releasing it resumes the other key
-if it is still held. Keyboard auto-repeat does not change that priority.
+Hold multiple keys for combined movement. For opposite directions on the same
+axis, the most recent real press takes priority; releasing it resumes the other
+key if still held. Auto-repeat does not change that priority. Left/right Shift
+and Ctrl are tracked independently.
 
-### Tests
+A single worker sends the latest complete input state to the camera. PTZ network
+calls do not block Tk's keyboard processing or build a queue of old directions.
+Pan/tilt and zoom are sent together in `ContinuousMove` requests.
 
-Run the keyboard and simulated ONVIF regression tests without connecting a camera:
+### Movement duration and stopping
 
-```bash
-python -m unittest discover -s tests -v
+The controller prefers the camera's declared default movement duration when it
+is valid within its supported range. The tested camera declares 60 seconds.
+Unchanged commands are renewed at one third of that duration, measured from
+transmission time. Key changes are processed immediately, independently of that
+renewal schedule.
+
+Releasing the controls, losing focus or closing the window requests an explicit
+Stop without waiting for this timeout. An absence of keyboard updates for
+0.5 seconds also requests Stop. If a network failure prevents Stop from reaching
+the camera, the last accepted movement may continue until the camera timeout.
+
+Targeted Stop followed by resumption is the default for cameras that ignore zero
+velocity. For a device **verified** to handle zero axes correctly, direct
+transitions can be enabled with `CAMERA_PTZ_CONSERVATIVE_STOPS=0` before launch.
+This optional mode failed on the reported camera; the normal setting preserves
+reliable releases at the cost of the short transition pause.
+
+### Window ownership
+
+Closing Camera Viewer closes the video players, PTZ controllers and Camera
+Manager windows it launched, including their children. A PTZ controller requests
+its movement and focus stops before exiting. Tk remains responsive during
+shutdown; an unresponsive owned child is terminated after 10 seconds. Windows
+launched independently remain independent.
+
+## Existing installations and encryption key
+
+Keep `camera_credentials.db` and its matching `.camera_encryption.key` together
+when backing up or moving an installation. These local files are excluded from
+GitHub and the source snapshot.
+
+The application reads the key beside its scripts, or from `CAMERA_ENCRYPTION_KEY`
+if that environment variable is set. A source snapshot named `~v0.2.6` can also
+read the key in its parent application folder.
+
+When upgrading an older installation that embedded its key in the source, save
+that **same existing key** in `.camera_encryption.key` before replacing the old
+files. Changing the key does not decrypt the old database. An existing database
+without a configured key stops startup with recovery instructions instead of
+creating a replacement. A new installation without a database generates its own
+key.
+
+Fernet protects stored credentials; it does not establish encrypted ONVIF or RTSP
+transport. Use a network appropriate for your camera's connection settings.
+
+## Diagnostics and tests
+
+The PTZ controller writes a local `ptz_control_<process-id>.log`, bounded to
+256 KiB plus one archive. It records requested axes, serialized velocity fields,
+requested movement duration and request results. It does not record camera
+addresses, credentials, profile tokens or SOAP payloads. Diagnostics do not add
+text to the PTZ interface, and a log failure cannot prevent Stop.
+
+```powershell
+python -m unittest discover -s tests
 ```
 
-Tests use Python's standard library and Tkinter. The physical camera still needs
-the short verification procedure in the release notes to confirm its response.
+The v0.2.6 r8 suite contains **114 passing tests**, covering keyboard combinations,
+rapid input changes, delayed responses, native timeouts, explicit stops, local key
+handling and parent/child shutdown. Tests use simulated camera services and do
+not move a physical camera. Real ONVIF/Zeep serialization and Tk startup/shutdown
+were also checked. Hardware validation applies to the camera tested, not to all
+ONVIF devices.
 
-## 🏗️ Architecture
+## Source layout
 
-### Core Components
+| File | Purpose |
+| --- | --- |
+| `camera_viewer.py` | Main camera list and launch controls |
+| `camera_manager.py` | Add, edit and remove camera configurations |
+| `player_vilkin_hikvision.py` | VLC video player and ONVIF stream discovery |
+| `ptz_keyboard_control.py` | PTZ window and physical key tracking |
+| `ptz_command_worker.py` | Latest-state ONVIF commands and stops |
+| `ptz_velocity.py` | Advertised velocity spaces and speed scaling |
+| `child_processes.py` | Cascading lifetime of child processes |
+| `camera_key.py` | Local encryption key loading |
+| `ptz_diagnostics.py` | Bounded command and serialized-velocity logs |
+| `tests/` | Automated regression tests |
+| `~v0.2.6/` | Source snapshot of the current release |
 
-- **`camera_viewer.py`**: Main application interface
-- **`camera_manager.py`**: Camera configuration management
-- **`ptz_keyboard_control.py`**: Real-time PTZ control interface
-- **`ptz_command_worker.py`**: Serialized ONVIF requests using the latest keyboard state
-- **`ptz_velocity.py`**: Advertised velocity spaces and signed speed scaling
-- **`child_processes.py`**: Parent/child lifetime and graceful cascading shutdown
-- **`ptz_diagnostics.py`**: Local PTZ command trace without connection details
-- **`camera_key.py`**: Installation key loaded from local configuration
-- **`player_vilkin_hikvision.py`**: Video stream player (Hikvision optimized)
+## Contributing and support
 
-### Security Features
+Propose changes through a pull request and include relevant validation. Changes
+to PTZ movement need both automated regression checks and testing on a camera
+before they replace the current behavior.
 
-- **Fernet Encryption**: All credentials are encrypted before database storage
-- **Local Storage**: Data remains on your local machine
-- **Secure Key Management**: Encryption keys are handled securely
+Report problems in [GitHub Issues](https://github.com/THET1TAN/camera-management-system/issues)
+with the application revision, reproduction steps and relevant PTZ log entries.
+Do not attach your database, encryption key or camera credentials.
 
-### Database Schema
+Author: [Joël Smith-Gravel / THET1TAN](https://github.com/THET1TAN).
 
-```sql
-CREATE TABLE cameras (
-    id INTEGER PRIMARY KEY,
-    ip TEXT,           -- Encrypted IP address
-    username TEXT,     -- Encrypted username
-    password TEXT,     -- Encrypted password
-    ptz INTEGER        -- PTZ capability flag (0/1)
-);
-```
+## License
 
-## 🔧 Configuration
-
-### Encryption Key
-The application reads `.camera_encryption.key` beside its scripts, or the
-`CAMERA_ENCRYPTION_KEY` environment variable. A source snapshot under `~v0.2.6`
-can use the key in the parent application folder. The key file is excluded from
-GitHub and the source snapshot. Keep it with your database backups.
-
-For an existing installation, copy the existing key into that local file before
-replacing old source files. Do not generate a different key for an existing
-database: it would prevent decryption. This workspace's original key has been
-preserved in the local file without modifying the database.
-
-A fresh installation with no database generates its own key. If a database
-already exists and no key is configured, startup stops with recovery instructions
-instead of silently creating an incompatible replacement key.
-
-### Python Version Management
-The application automatically detects and uses Python 3.9 for ONVIF operations:
-
-```python
-def get_python39():
-    python_exe = shutil.which("python3.9")
-    if not python_exe:
-        try:
-            python_exe = subprocess.check_output(
-                ["py", "-3.9", "-c", "import sys; print(sys.executable)"]
-            ).decode().strip()
-        except Exception:
-            python_exe = sys.executable
-    return python_exe
-```
-
-## 📦 Dependencies
-
-- **cryptography**: Secure credential encryption
-- **python-vlc**: Video stream playback
-- **onvif-zeep**: ONVIF camera communication
-- **zeep**: SOAP web services
-- **lxml**: XML processing
-- **requests**: HTTP communications
-- **tkinter**: GUI framework (included with Python)
-
-## 🎯 Supported Cameras
-
-- **ONVIF-compliant cameras** (primary support)
-- **Hikvision cameras** (optimized support)
-- **Generic IP cameras** with RTSP streams
-
-## 🔒 Security Considerations
-
-- All camera credentials are encrypted using Fernet (AES 128)
-- Database file is stored locally with encrypted content
-- No network transmission of plain-text credentials
-- Consider implementing per-user encryption keys for multi-user environments
-
-## 🚧 Future Enhancements
-
-- [ ] Multi-user support with individual encryption keys
-- [ ] Web-based interface
-- [ ] Camera group management
-- [ ] Recording and playback features
-- [ ] Motion detection alerts
-- [ ] Mobile app companion
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📝 License
-
-This project is licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](https://creativecommons.org/licenses/by-nc-sa/4.0/).
-
-## 🆘 Support
-
-If you encounter any issues or have questions:
-
-1. Check the [Issues](https://github.com/THET1TAN/camera-management-system/issues) page
-2. Create a new issue with detailed information
-3. Include system information and error logs
-
-## 📞 Contact
-
-- **Author**: Joël Smith-Gravel
-- **Email**: joel.smith-gravel@hotmail.ca
-- **GitHub**: [@THET1TAN](https://github.com/THET1TAN)
-
----
-
-⭐ **Star this repository if you find it helpful!**
+[Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International](./LICENSE).
+Technical reference: [ONVIF PTZ service specification](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v250a.pdf).

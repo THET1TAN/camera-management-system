@@ -1,11 +1,11 @@
-# Notes de version - Camera v0.2.6 r8 (PR en brouillon)
+# Notes de version - Camera v0.2.6 r8 (version courante)
 
 Date : 2026-09-10
 
 Validation utilisateur de la r8 : le zoom continue pendant le maintien d'une
 diagonale et les relâchements de direction fonctionnent. La pause d'arrêt/reprise
-reste présente. Ce résultat ne vaut pas validation universelle ni autorisation
-de fusion dans main.
+reste présente. Ce résultat ne vaut pas validation universelle. L'utilisateur a ensuite
+autorisé l'intégration de cette r8 dans main et une PR distincte pour la pause.
 
 ## Comportement actuel
 
@@ -90,7 +90,8 @@ génère sa propre clé. CAMERA_ENCRYPTION_KEY reste une configuration possible.
 - 28 fichiers sources identiques à la racine, dans ~v0.2.6 et sur la branche de PR.
 - Bases, clés locales, journaux et exécutables générés exclus de la publication.
 - Aucun exécutable recompilé. Utiliser python camera_viewer.py à la racine.
-- PR #3 en brouillon; main inchangé, aucune fusion sans validation utilisateur.
+- Version r8 destinée à main, intégration de la PR #3 autorisée par l’utilisateur.
+- La recherche sur la pause au relâchement est préparée dans une PR séparée.
 - 114 tests automatisés réussis sous Python 3.14 avec services caméra simulés.
 - 384 combinaisons/ordres de touches simulés, changements rapides, erreurs,
   réponses lentes, relâchements et reprise des seules directions maintenues.
