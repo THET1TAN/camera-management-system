@@ -2,7 +2,7 @@
 
 A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
 
-## Test version: v0.2.6 r2
+## Test version: v0.2.6 r3
 
 Keyboard PTZ control now tracks each held key independently. For example, hold
 Down + Right, then release Down: the camera receives a horizontal-only command
@@ -11,15 +11,28 @@ missed release events. Releasing all PTZ keys sends an explicit ONVIF stop;
 leaving the control window or closing it clears all held controls and requests
 both PTZ and focus stops.
 
-When an axis is released or reversed, revision 2 explicitly stops its ONVIF
+When an axis is released or reversed, the controller explicitly stops its ONVIF
 group before resuming the remaining directions. This also handles devices that
 keep an old velocity when sent a zero component. Pan and tilt share one stop
 group, so that transition can cause a brief pause; zoom is stopped separately.
 The window displays the keyboard request and whether the PTZ command was accepted
 or failed. An accepted command does not confirm the camera's physical movement.
 
+Revision 3 processes ONVIF requests in one background worker so the keyboard
+remains responsive during network calls. Only the latest complete input state is
+kept. After each camera response, the worker reads that state again before the
+next command, including between Stop and resume. Rapid direction changes cannot
+build a queue of old movements. If input updates stop for 0.5 seconds, the worker
+requests an explicit stop.
+
+Continuous movement uses a short renewable duration within the camera's advertised
+timeout range. When capabilities cannot be read, the camera's declared default
+duration is used if available; otherwise its implicit default remains in effect.
+Renewals always use current input. Network operation timeouts and retry delays
+also keep errors from blocking the keyboard.
+
 Close the PTZ window and reopen it to load this revision. Its title must contain
-`v0.2.6 r2`. This version is awaiting camera validation in
+`v0.2.6 r3`. This version is awaiting camera validation in
 [PR #3](https://github.com/THET1TAN/camera-management-system/pull/3).
 
 The current source files are at the repository root, with an identical source
@@ -119,6 +132,7 @@ the short verification procedure in the release notes to confirm its response.
 - **`camera_viewer.py`**: Main application interface
 - **`camera_manager.py`**: Camera configuration management
 - **`ptz_keyboard_control.py`**: Real-time PTZ control interface
+- **`ptz_command_worker.py`**: Serialized ONVIF requests using the latest keyboard state
 - **`player_vilkin_hikvision.py`**: Video stream player (Hikvision optimized)
 
 ### Security Features

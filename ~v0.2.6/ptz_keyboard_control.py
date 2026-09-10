@@ -2,128 +2,25 @@ import tkinter as tk
 from tkinter import ttk
 import sys
 
+from ptz_command_worker import ControlState, PTZCommandWorker, select_move_timeout
+
 VERSION = "0.2.6"
-REVISION = 2
+REVISION = 3
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
 requested_motion_var = None
 ptz_command_var = None
+command_worker = None
+closing = False
+window_active = False
+preset_request = None
+preset_sequence = 0
 
-# Paramètres de vitesse et mapping des presets
 speed = 0.5
 min_speed = 0.1
 max_speed = 1.0
-pan_tilt_speed = 1.0
-zoom_speed = 1.0
+preset_tokens = {str(number): f'PresetToken{number}' for number in range(1, 10)}
 
-preset_tokens = {
-    '1': 'PresetToken1',
-    '2': 'PresetToken2',
-    '3': 'PresetToken3',
-    '4': 'PresetToken4',
-    '5': 'PresetToken5',
-    '6': 'PresetToken6',
-    '7': 'PresetToken7',
-    '8': 'PresetToken8',
-    '9': 'PresetToken9'
-}
-
-# Variables d'état PTZ
-current_pan = 0
-current_tilt = 0
-current_zoom = 0
-current_focus = 0
-
-
-def axis_needs_stop(previous, requested):
-    """Arrêter un axe relâché/inversé ou dont l'état est inconnu."""
-    return previous is None or (previous != 0 and previous * requested <= 0)
-
-
-def show_ptz_command(message):
-    if ptz_command_var is not None:
-        ptz_command_var.set(message)
-
-
-def start_move(pan, tilt, zoom):
-    global current_pan, current_tilt, current_zoom
-    if pan == current_pan and tilt == current_tilt and zoom == current_zoom:
-        return
-    # Certains appareils conservent une composante précédente malgré un zéro.
-    # ONVIF arrête Pan/Tilt ensemble : arrêter ce groupe, puis reprendre les
-    # directions encore demandées. Ne pas interrompre le zoom sans nécessité.
-    stop_pan_tilt = (axis_needs_stop(current_pan, pan)
-                     or axis_needs_stop(current_tilt, tilt))
-    stop_zoom = axis_needs_stop(current_zoom, zoom)
-    if stop_pan_tilt or stop_zoom:
-        if not stop_move(pan_tilt=stop_pan_tilt, zoom=stop_zoom):
-            return  # Retenter l'arrêt avant toute reprise si la caméra échoue.
-    request = ptz_service.create_type('ContinuousMove')
-    request.ProfileToken = media_profile.token
-    request.Velocity = PTZSpeed()
-    request.Velocity.PanTilt = Vector2D(x=pan, y=tilt)
-    request.Velocity.Zoom = Vector1D(x=zoom)
-    try:
-        ptz_service.ContinuousMove(request)
-        current_pan, current_tilt, current_zoom = pan, tilt, zoom
-        show_ptz_command(f"PTZ request accepted: pan {pan:+.1f}, tilt {tilt:+.1f}, zoom {zoom:+.1f}")
-    except Exception as e:
-        # La caméra a pu recevoir la commande malgré une réponse perdue.
-        # Un état inconnu permet de retenter le mouvement ou son arrêt.
-        current_pan = current_tilt = current_zoom = None
-        show_ptz_command("PTZ request failed (see console)")
-        print(f"ContinuousMove error: {e}")
-
-def stop_move(force=False, pan_tilt=True, zoom=True):
-    global current_pan, current_tilt, current_zoom
-    if not pan_tilt and not zoom:
-        return True
-    if not force and (not pan_tilt or (current_pan == 0 and current_tilt == 0)) and (not zoom or current_zoom == 0):
-        return True
-    try:
-        ptz_service.Stop({'ProfileToken': media_profile.token, 'PanTilt': pan_tilt, 'Zoom': zoom})
-        if pan_tilt:
-            current_pan, current_tilt = 0, 0
-        if zoom:
-            current_zoom = 0
-        groups = 'pan/tilt + zoom' if pan_tilt and zoom else ('pan/tilt' if pan_tilt else 'zoom')
-        show_ptz_command(f"PTZ stop accepted: {groups}")
-        return True
-    except Exception as e:
-        if pan_tilt:
-            current_pan = current_tilt = None
-        if zoom:
-            current_zoom = None
-        show_ptz_command("PTZ stop failed; retry pending (see console)")
-        print(f"Stop error: {e}")
-        return False
-
-def start_focus(focus_speed):
-    global current_focus
-    if focus_speed == current_focus:
-        return
-    request = imaging_service.create_type('Move')
-    request.VideoSourceToken = video_source_token
-    request.Focus = {'Continuous': {'Speed': focus_speed}}
-    try:
-        imaging_service.Move(request)
-        current_focus = focus_speed
-    except Exception as e:
-        current_focus = None
-        print(f"Focus move error: {e}")
-
-def stop_focus(force=False):
-    global current_focus
-    if not force and current_focus == 0:
-        return
-    request = imaging_service.create_type('Stop')
-    request.VideoSourceToken = video_source_token
-    try:
-        imaging_service.Stop(request)
-        current_focus = 0
-    except Exception as e:
-        current_focus = None
-        print(f"Focus stop error: {e}")
 
 class KeyboardManager:
     """Recalcule chaque axe à partir des touches physiques encore maintenues."""
@@ -199,132 +96,90 @@ def event_keycode(event):
         return modifiers.get(event.keysym.lower(), event.keycode)
     return event.keycode
 
-# Remplacer la variable keys_pressed par une instance de KeyboardManager
 keyboard = KeyboardManager()
 
-def update_move():
-    pan, tilt, zoom = keyboard.get_movement()
-    
-    # Applique la vitesse aux mouvements avec une transition plus douce
-    pan = pan * speed if pan != 0 else 0
-    tilt = tilt * speed if tilt != 0 else 0
-    zoom = zoom * speed if zoom != 0 else 0
 
+def update_controls():
+    """Publish one complete snapshot without doing network I/O in Tk."""
+    keyboard.synchronize(key_is_down)
+    pan, tilt, zoom = (direction * speed for direction in keyboard.get_movement())
+    focus = keyboard.get_focus() * speed
     if requested_motion_var is not None:
         requested_motion_var.set(f"Keyboard request: pan {pan:+.1f}, tilt {tilt:+.1f}, zoom {zoom:+.1f}")
+    command_worker.submit(ControlState(pan, tilt, zoom, focus, preset_request))
 
-    # Un arrêt explicite quand toutes les touches PTZ sont relâchées.
-    if pan == 0 and tilt == 0 and zoom == 0:
-        stop_move()
-    else:
-        # Le vecteur complet met à zéro les seuls axes relâchés.
-        start_move(pan, tilt, zoom)
-
-def update_focus():
-    # Obtenir l'état du focus depuis le gestionnaire de clavier
-    focus_direction = keyboard.get_focus()
-    focus_speed = focus_direction * speed
-
-    if focus_speed != 0:
-        start_focus(focus_speed)
-    else:
-        stop_focus()
 
 def update_speed_label():
-    # Cette fonction met à jour l'affichage de la vitesse dans l'interface.
     speed_value_label.config(text=f"{speed:.1f}")
     speed_progress['value'] = (speed - min_speed) / (max_speed - min_speed) * 100
 
-def handle_preset(preset_number):
-    print(f"Preset {preset_number} activé")
-    # Logique pour activer le preset correspondant
-
-def increase_speed():
-    global speed
-    if speed < max_speed:
-        speed += 0.1
-        speed = round(speed, 1)
-        speed_value_label.config(text=f"{speed:.1f}")
-
-def decrease_speed():
-    global speed
-    if speed > min_speed:
-        speed -= 0.1
-        speed = round(speed, 1)
-        speed_value_label.config(text=f"{speed:.1f}")
 
 def on_key_press(event):
-    global speed
+    global speed, preset_request, preset_sequence
+    if closing or not window_active:
+        return
     key = event.keysym.lower()
-
     if key == 'escape':
         close_controller()
         return
-
     keycode = event_keycode(event)
     keyboard.synchronize(key_is_down)
     if key_is_down is not None and not key_is_down(keycode):
-        # Ne pas rejouer un ancien appui resté en attente pendant un appel réseau.
-        update_move()
-        update_focus()
+        update_controls()
         return
-
-    if key == 'm':
-        increase_speed()
-        update_speed_label()  # Mettre à jour l'affichage de la vitesse
-        print(f"Vitesse augmentée à {speed:.1f}")
-        # Appeler update_move() et update_focus() pour prendre en compte la nouvelle vitesse immédiatement
-        update_move()
-        update_focus()
-    elif key == 'n':
-        decrease_speed()
-        update_speed_label()  # Mettre à jour l'affichage de la vitesse
-        print(f"Vitesse diminuée à {speed:.1f}")
-        # Appeler update_move() et update_focus() pour prendre en compte la nouvelle vitesse immédiatement
-        update_move()
-        update_focus()
+    if key in ('m', 'n'):
+        speed = round(max(min_speed, min(max_speed, speed + (0.1 if key == 'm' else -0.1))), 1)
+        update_speed_label()
     elif key in preset_tokens:
-        preset_token = preset_tokens[key]
-        try:
-            ptz_service.GotoPreset({
-                'ProfileToken': media_profile.token,
-                'PresetToken': preset_token,
-                'Speed': {
-                    'PanTilt': {'x': pan_tilt_speed, 'y': pan_tilt_speed},
-                    'Zoom': {'x': zoom_speed}
-                }
-            })
-            print(f"Aller au preset {key}")
-        except Exception as e:
-            print(f"Erreur preset {key}: {e}")
-    else:
-        keyboard.press_key(key, keycode)
-        update_move()
-        update_focus()
+        keyboard.clear()
+        preset_sequence += 1
+        preset_request = (preset_sequence, preset_tokens[key])
+    elif keyboard.press_key(key, keycode):
+        preset_request = None
+    update_controls()
+
 
 def on_key_release(event):
+    if closing:
+        return
     keyboard.release_key(event.keysym, event_keycode(event))
-    keyboard.synchronize(key_is_down)
-    update_move()
-    update_focus()
+    update_controls()
 
 
 def poll_keyboard():
-    keyboard.synchronize(key_is_down)
-    update_move()
-    update_focus()
+    if closing:
+        return
+    update_controls()
+    if ptz_command_var is not None:
+        ptz_command_var.set(command_worker.status)
     root.after(KEY_POLL_INTERVAL_MS, poll_keyboard)
 
 
-def release_all_controls(force=False):
+def release_all_controls():
+    global preset_request
     keyboard.clear()
-    stop_move(force=force)
-    stop_focus(force=force)
+    preset_request = None
+    command_worker.halt()
 
 
 def close_controller():
-    release_all_controls(force=True)
-    root.quit()
+    global closing
+    if closing:
+        return
+    closing = True
+    keyboard.clear()
+    command_worker.close()
+    finish_close()
+
+
+def finish_close():
+    if ptz_command_var is not None:
+        ptz_command_var.set(command_worker.status)
+    if command_worker.is_alive():
+        root.after(KEY_POLL_INTERVAL_MS, finish_close)
+    else:
+        root.quit()
+
 
 class PTZController:
     def __init__(self, root, camera_id, camera_ip):
@@ -332,32 +187,35 @@ class PTZController:
         self.camera_id = camera_id
         self.camera_ip = camera_ip
         self.update_title_status()
-        
+
         # Bind focus events
         self.root.bind("<FocusIn>", self.on_focus_in)
         self.root.bind("<FocusOut>", self.on_focus_out)
-    
+
     def update_title_status(self, status=None):
         if status is None:
             status = "In Use" if self.root.focus_get() else "Idle"
         self.root.title(f"PTZ Control v{VERSION} r{REVISION} - Camera {self.camera_id} - {status}")
-    
+
     def on_focus_in(self, event):
+        global window_active
+        window_active = True
         self.update_title_status("In Use")
-    
+
     def on_focus_out(self, event):
         self.root.after_idle(self.check_focus)
 
     def check_focus(self):
+        global window_active
         # Un transfert du focus entre widgets de cette fenêtre reste actif.
         if self.root.focus_get() is None:
-            release_all_controls(force=True)
+            window_active = False
+            release_all_controls()
             self.update_title_status("Idle")
 
 def main(argv=None):
-    global root, ptz_service, imaging_service, media_profile, video_source_token
-    global PTZSpeed, Vector2D, Vector1D, speed_value_label, speed_progress, key_is_down
-    global requested_motion_var, ptz_command_var
+    global root, command_worker, speed_value_label, speed_progress, key_is_down
+    global requested_motion_var, ptz_command_var, closing, window_active, preset_request
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 4:
         print("Usage: ptz_keyboard_control.py camera_id ip username password")
@@ -371,16 +229,20 @@ def main(argv=None):
         imaging_service = camera.create_imaging_service()
         media_profile = media_service.GetProfiles()[0]
         video_source_token = media_profile.VideoSourceConfiguration.SourceToken
-        get_type = ptz_service.zeep_client.wsdl.types.get_type
-        PTZSpeed = get_type('{http://www.onvif.org/ver10/schema}PTZSpeed')
-        Vector2D = get_type('{http://www.onvif.org/ver10/schema}Vector2D')
-        Vector1D = get_type('{http://www.onvif.org/ver10/schema}Vector1D')
+        for service in (ptz_service, imaging_service):
+            service.zeep_client.transport.operation_timeout = 1.0
+        move_timeout = select_move_timeout(ptz_service, media_profile)
     except Exception as e:
         print(f"Error connecting to camera: {e}")
         return 1
 
     key_is_down = create_key_state_reader()
     keyboard.clear()
+    closing = False
+    window_active = False
+    preset_request = None
+    command_worker = PTZCommandWorker(ptz_service, imaging_service, media_profile.token,
+                                      video_source_token, move_timeout=move_timeout)
     root = tk.Tk()
     controller = PTZController(root, camera_id, camera_ip)
 
@@ -424,11 +286,15 @@ def main(argv=None):
 
     print("Window ready. Click on the window to select it, then use the indicated keys.")
     root.protocol("WM_DELETE_WINDOW", close_controller)
+    command_worker.start()
     root.after(KEY_POLL_INTERVAL_MS, poll_keyboard)
     try:
         root.mainloop()
     finally:
-        release_all_controls(force=True)
+        command_worker.close()
+        command_worker.join(timeout=8)
+        if command_worker.is_alive() or 'not confirmed' in command_worker.status:
+            print('Camera stop not confirmed during shutdown')
         root.destroy()
     return 0
 
