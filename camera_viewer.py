@@ -2,12 +2,15 @@ import os
 import sqlite3
 from cryptography.fernet import Fernet
 import tkinter as tk
+from tkinter import messagebox
 import subprocess
 import shutil
 import sys
+from child_processes import ChildProcesses, parent_lifetime
+from camera_key import load_encryption_key
 
-# Encryption key (should be kept secret)
-ENCRYPTION_KEY = b'g4ZltE3Vv2Xzq5y6Lq3l4f8Ozt2Ck2Tk6v5b0rN2ghE='
+# Keep the installation key outside the published source files.
+ENCRYPTION_KEY = load_encryption_key(os.path.dirname(__file__))
 
 # Database file
 DB_FILE = os.path.join(os.path.dirname(__file__), 'camera_credentials.db')
@@ -75,7 +78,8 @@ def get_cameras():
 class CameraViewer:
     def __init__(self, root):
         self.root = root
-        self.processes = []
+        self.children = ChildProcesses(root)
+        parent_lifetime.bind(root, self.on_closing)
         
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
@@ -161,13 +165,12 @@ class CameraViewer:
             messagebox.showerror("Error", "Python 3.9 is required to view cameras")
             return
             
-        process = subprocess.Popen([python_exe, 
+        self.children.spawn([python_exe,
                                   os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py'),
                                   str(camera[0]),
                                   camera[1],
                                   camera[2],
                                   decrypted_password])
-        self.processes.append(process)
 
     def play_ptz_thread(self, camera):
         python_exe = get_python39()
@@ -175,24 +178,16 @@ class CameraViewer:
             messagebox.showerror("Error", "Python 3.9 is required for PTZ")
             return
         decrypted_password = cipher.decrypt(camera[3]).decode()
-        subprocess.Popen([python_exe,
+        self.children.spawn([python_exe,
                           os.path.join(os.path.dirname(__file__), 'ptz_keyboard_control.py'),
                           str(camera[0]), camera[1], camera[2], decrypted_password])
 
     def open_camera_manager(self):
         manager_path = os.path.join(os.path.dirname(__file__), 'camera_manager.py')
-        subprocess.Popen([get_current_python(), manager_path])  # Use same Python version as current
+        self.children.spawn([get_current_python(), manager_path])
 
     def on_closing(self):
-        for process in self.processes:
-            try:
-                process.terminate()
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                process.kill()
-            except Exception as e:
-                print(f"Error closing process: {e}")
-        self.root.destroy()
+        self.children.close()
 
 if __name__ == "__main__":
     root = tk.Tk()

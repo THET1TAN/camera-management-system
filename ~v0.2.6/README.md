@@ -2,7 +2,7 @@
 
 A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
 
-## Test version: v0.2.6 r4
+## Test version: v0.2.6 r6
 
 Keyboard PTZ control now tracks each held key independently. For example, hold
 Down + Right, then release Down: the camera receives a horizontal-only command
@@ -16,14 +16,36 @@ group before resuming the remaining directions. This also handles devices that
 keep an old velocity when sent a zero component. Pan and tilt share one stop
 group, so that transition can cause a brief pause; zoom is stopped separately.
 
-Pan/tilt and zoom now use separate ONVIF ContinuousMove requests, so holding a
-diagonal and Shift/Ctrl can keep both movements active. Each request omits the
-other group, which ONVIF specifies must retain its current movement. Each active
-group has its own renewal schedule; requests alternate when both need updating.
-This uses the standard protocol without manufacturer-specific branches or SDKs.
-The change is covered by simulated cameras with standard behavior and with
-limited handling of combined requests; physical camera validation is pending.
+Pan/tilt and zoom are transmitted together in one ONVIF ContinuousMove request,
+including every renewal. The separate requests used in r4 made devices that
+replace omitted groups alternate between movement and zoom. Only active groups
+are included; releases still use explicit targeted Stop requests. This uses
+standard ONVIF without manufacturer-specific branches or SDKs. Simulated tests
+cover standard behavior and replacement of omitted groups. Simultaneous motion
+on the reported camera is still unresolved after the r5 hardware test. Its local
+trace shows all three requested velocities sent together and requests acknowledged,
+without an intervening Stop while the keys remain held. Successful presets
+demonstrate mechanical ability, but do not establish ContinuousMove behavior.
 See [ONVIF PTZ section 5.3.3](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v250a.pdf).
+
+Revision 6 reads the advertised continuous velocity spaces and ranges, selects
+the profile's supported defaults (or an advertised alternative), and includes
+their URIs explicitly in each move. Signed speeds are scaled into those ranges.
+Missing or invalid capability metadata preserves the previous normalized requests.
+The local trace also inspects the serialized SOAP velocity fields without storing
+the authentication header or camera addresses. The real ONVIF/Zeep serialization
+has been checked offline; the r6 response on the physical camera remains to be tested.
+
+Closing Camera Viewer now closes all its video players, PTZ controllers and
+Camera Manager windows, including their children. Each child receives a graceful
+shutdown request; PTZ sends its stop requests before exiting. Shutdown keeps Tk
+responsive and forcibly ends an unresponsive owned child after 10 seconds.
+Auxiliary windows launched independently remain independent.
+
+A bounded local `ptz_control_<process-id>.log` records requested axes, outgoing
+PTZ commands and whether requests succeeded. It contains no camera addresses,
+credentials, profile tokens or SOAP payloads. No diagnostic text is added to the
+control window. These logs stay outside the version snapshot and GitHub.
 
 Revision 3 processes ONVIF requests in one background worker so the keyboard
 remains responsive during network calls. Only the latest complete input state is
@@ -38,8 +60,9 @@ duration is used if available; otherwise its implicit default remains in effect.
 Renewals always use current input. Network operation timeouts and retry delays
 also keep errors from blocking the keyboard.
 
-Close the PTZ window and reopen it to load this revision. Its title must contain
-`v0.2.6 r4`. This version is available for review in
+Close existing Viewer and auxiliary windows, then restart `python camera_viewer.py`
+from the root to load the parent/child changes. The PTZ title must contain
+`v0.2.6 r6`. This version is available for review in
 [PR #3](https://github.com/THET1TAN/camera-management-system/pull/3).
 
 The current source files are at the repository root, with an identical source
@@ -140,6 +163,10 @@ the short verification procedure in the release notes to confirm its response.
 - **`camera_manager.py`**: Camera configuration management
 - **`ptz_keyboard_control.py`**: Real-time PTZ control interface
 - **`ptz_command_worker.py`**: Serialized ONVIF requests using the latest keyboard state
+- **`ptz_velocity.py`**: Advertised velocity spaces and signed speed scaling
+- **`child_processes.py`**: Parent/child lifetime and graceful cascading shutdown
+- **`ptz_diagnostics.py`**: Local PTZ command trace without connection details
+- **`camera_key.py`**: Installation key loaded from local configuration
 - **`player_vilkin_hikvision.py`**: Video stream player (Hikvision optimized)
 
 ### Security Features
@@ -163,11 +190,19 @@ CREATE TABLE cameras (
 ## 🔧 Configuration
 
 ### Encryption Key
-The application uses a predefined encryption key. For production use, consider implementing user-specific keys:
+The application reads `.camera_encryption.key` beside its scripts, or the
+`CAMERA_ENCRYPTION_KEY` environment variable. A source snapshot under `~v0.2.6`
+can use the key in the parent application folder. The key file is excluded from
+GitHub and the source snapshot. Keep it with your database backups.
 
-Keep the encryption key private. Changing it requires migrating the existing
-encrypted camera database; replacing it directly prevents existing credentials
-from being decrypted.
+For an existing installation, copy the existing key into that local file before
+replacing old source files. Do not generate a different key for an existing
+database: it would prevent decryption. This workspace's original key has been
+preserved in the local file without modifying the database.
+
+A fresh installation with no database generates its own key. If a database
+already exists and no key is configured, startup stops with recovery instructions
+instead of silently creating an incompatible replacement key.
 
 ### Python Version Management
 The application automatically detects and uses Python 3.9 for ONVIF operations:

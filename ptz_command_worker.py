@@ -4,6 +4,7 @@ from datetime import timedelta
 import math
 import threading
 import time
+from ptz_velocity import VelocitySpaces
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,10 @@ class ControlState:
         return self.pan, self.tilt, self.zoom
 
 
-def select_move_timeout(service, profile):
+_UNREAD_OPTIONS = object()
+
+
+def select_move_timeout(service, profile, options=_UNREAD_OPTIONS):
     """Choose a short duration inside the camera's advertised timeout range."""
     def seconds(value, allow_zero=False):
         try:
@@ -31,7 +35,8 @@ def select_move_timeout(service, profile):
     config = getattr(profile, 'PTZConfiguration', None)
     default = seconds(getattr(config, 'DefaultPTZTimeout', None))
     try:
-        options = service.GetConfigurationOptions({'ConfigurationToken': config.token})
+        if options is _UNREAD_OPTIONS:
+            options = service.GetConfigurationOptions({'ConfigurationToken': config.token})
         minimum = seconds(options.PTZTimeout.Min, allow_zero=True)
         maximum = seconds(options.PTZTimeout.Max)
         if minimum is not None and maximum is not None and minimum <= maximum:
@@ -47,13 +52,16 @@ class PTZCommandWorker:
     CLOSE_SECONDS = 6.0
 
     def __init__(self, ptz, imaging, profile_token, source_token,
-                 move_timeout=None, clock=time.monotonic):
+                 move_timeout=None, clock=time.monotonic, diagnostics=None, velocity_spaces=None):
         self.ptz = ptz
         self.imaging = imaging
         self.profile_token = profile_token
         self.source_token = source_token
         self.move_timeout = move_timeout
         self.clock = clock
+        self.diagnostics = diagnostics
+        self.velocity_spaces = velocity_spaces or VelocitySpaces()
+        self._last_observed = None
         self._condition = threading.Condition()
         self._desired = ControlState()
         self._last_input = clock()
@@ -68,8 +76,7 @@ class PTZCommandWorker:
         self.focus = 0
         self._preset_done = None
         self._preset_active = False
-        self._renew_at = [0, 0]  # Pan/Tilt and Zoom have independent leases.
-        self._last_move_group = 1
+        self._renew_at = 0
         self._ptz_retry_at = self._focus_retry_at = 0
 
     @property
@@ -80,6 +87,13 @@ class PTZCommandWorker:
     def _report(self, message):
         with self._condition:
             self._status = message
+
+    def _trace(self, event, **values):
+        if self.diagnostics is not None:
+            try:
+                self.diagnostics.record(event, **values)
+            except Exception:
+                pass  # Diagnostic storage must never interrupt a Stop request.
 
     def submit(self, state):
         with self._condition:
@@ -127,6 +141,7 @@ class PTZCommandWorker:
         return previous is None or (previous != 0 and previous * requested <= 0)
 
     def _stop_ptz(self, pan_tilt, zoom, halt=None):
+        self._trace('stop_send', pan_tilt=pan_tilt, zoom=zoom)
         try:
             self.ptz.Stop({'ProfileToken': self.profile_token,
                            'PanTilt': pan_tilt, 'Zoom': zoom})
@@ -143,35 +158,41 @@ class PTZCommandWorker:
             self._preset_active = False
         if halt is not None:
             self._ptz_halt_done = halt
+        self._trace('stop_accepted', pan_tilt=pan_tilt, zoom=zoom)
         self._report('PTZ stop accepted: ' + ('pan/tilt + zoom' if pan_tilt and zoom
                                             else 'pan/tilt' if pan_tilt else 'zoom'))
 
-    def _move(self, motion, group):
-        pan_tilt = group == 0
+    def _move(self, motion):
+        pan_tilt = motion[:2] != (0, 0)
+        zoom = motion[2] != 0
         try:
             request = self.ptz.create_type('ContinuousMove')
             request.ProfileToken = self.profile_token
-            # ONVIF 5.3.3: an omitted group keeps its current movement. Separate
-            # requests also accommodate devices that only apply one group from
-            # a combined payload. Never send a zero placeholder for the other.
-            request.Velocity = ({'PanTilt': {'x': motion[0], 'y': motion[1]}}
-                                if pan_tilt else {'Zoom': {'x': motion[2]}})
+            # Always transmit all HELD controls together, including renewals.
+            # Separate PT/Zoom requests make devices that replace their current
+            # movement on every request alternate between the two actions.
+            request.Velocity = self.velocity_spaces.build(motion)
             if self.move_timeout is not None:
                 request.Timeout = timedelta(seconds=self.move_timeout)
+            pt_vector = request.Velocity.get('PanTilt', {})
+            zoom_vector = request.Velocity.get('Zoom', {})
+            self._trace('move_send', pan=pt_vector.get('x', 0), tilt=pt_vector.get('y', 0),
+                        zoom=zoom_vector.get('x', 0))
             self.ptz.ContinuousMove(request)
         except Exception as error:
-            self.motion = ((None, None, self.motion[2]) if pan_tilt
-                           else (*self.motion[:2], None))
+            self.motion = (None if pan_tilt else self.motion[0],
+                           None if pan_tilt else self.motion[1],
+                           None if zoom else self.motion[2])
             self._ptz_failed('ContinuousMove', error)
             return
-        self.motion = ((*motion[:2], self.motion[2]) if pan_tilt
-                       else (*self.motion[:2], motion[2]))
-        self._last_move_group = group
+        self.motion = motion
+        self._trace('move_accepted', pan=motion[0], tilt=motion[1], zoom=motion[2])
         # Renewal is never a queued copy; the next step reads the latest state.
-        self._renew_at[group] = self.clock() + (self.move_timeout / 3 if self.move_timeout else 0.25)
-        self._report('PTZ request accepted: ' + ('pan/tilt' if pan_tilt else 'zoom'))
+        self._renew_at = self.clock() + (self.move_timeout / 3 if self.move_timeout else 0.25)
+        self._report('PTZ request accepted: pan {:+.1f}, tilt {:+.1f}, zoom {:+.1f}'.format(*motion))
 
     def _ptz_failed(self, operation, error):
+        self._trace('request_failed', operation=operation, error_type=type(error).__name__)
         self._ptz_retry_at = self.clock() + self.RETRY_SECONDS
         self._report(f'PTZ {operation} failed; retry pending ({type(error).__name__})')
 
@@ -234,23 +255,19 @@ class PTZCommandWorker:
         if stop_pt or stop_zoom:
             self._stop_ptz(stop_pt, stop_zoom)
             return True
-        pending = (
-            desired.motion[:2] != (0, 0) and
-            (self.motion[:2] != desired.motion[:2] or self.clock() >= self._renew_at[0]),
-            desired.zoom != 0 and
-            (self.motion[2] != desired.zoom or self.clock() >= self._renew_at[1]),
-        )
-        # If both need updating, alternate so slow replies or frequent changes
-        # cannot continually postpone the other group's renewal.
-        for group in (1 - self._last_move_group, self._last_move_group):
-            if pending[group]:
-                self._move(desired.motion, group)
-                return True
+        if self.motion != desired.motion or self.clock() >= self._renew_at:
+            self._move(desired.motion)
+            return True
         return False
 
     def step(self):
         """At most one network request; re-read input before the next request."""
         desired, halt = self._snapshot()
+        observed = (desired, halt)
+        if observed != self._last_observed:
+            self._last_observed = observed
+            self._trace('controls', pan=desired.pan, tilt=desired.tilt, zoom=desired.zoom,
+                        focus=desired.focus, preset=desired.preset is not None, halt=halt)
         # A released focus must not wait behind a stream of PTZ changes.
         if (desired.focus == 0 or self._focus_halt_done != halt) and self._focus_step(desired, halt):
             return True

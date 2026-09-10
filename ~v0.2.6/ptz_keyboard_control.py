@@ -1,11 +1,16 @@
 import tkinter as tk
 from tkinter import ttk
 import sys
+import os
+from pathlib import Path
 
 from ptz_command_worker import ControlState, PTZCommandWorker, select_move_timeout
+from child_processes import parent_lifetime
+from ptz_diagnostics import PTZDiagnostics, install_wire_trace
+from ptz_velocity import VelocitySpaces
 
 VERSION = "0.2.6"
-REVISION = 4
+REVISION = 6
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
 command_worker = None
@@ -161,6 +166,7 @@ def close_controller():
     if closing:
         return
     closing = True
+    root.withdraw()
     keyboard.clear()
     command_worker.close()
     finish_close()
@@ -223,7 +229,13 @@ def main(argv=None):
         video_source_token = media_profile.VideoSourceConfiguration.SourceToken
         for service in (ptz_service, imaging_service):
             service.zeep_client.transport.operation_timeout = 1.0
-        move_timeout = select_move_timeout(ptz_service, media_profile)
+        configuration = getattr(media_profile, 'PTZConfiguration', None)
+        try:
+            options = ptz_service.GetConfigurationOptions({'ConfigurationToken': configuration.token})
+        except Exception:
+            options = None
+        move_timeout = select_move_timeout(ptz_service, media_profile, options=options)
+        velocity_spaces = VelocitySpaces.from_options(configuration, options)
     except Exception as e:
         print(f"Error connecting to camera: {e}")
         return 1
@@ -233,8 +245,18 @@ def main(argv=None):
     closing = False
     window_active = False
     preset_request = None
+    diagnostics = None
+    try:
+        diagnostics = PTZDiagnostics(Path(__file__).with_name(f'ptz_control_{os.getpid()}.log'))
+        diagnostics.record('session', version=VERSION, revision=REVISION,
+                           move_timeout=move_timeout)
+        diagnostics.record('velocity_spaces', **velocity_spaces.summary())
+        diagnostics.record('wire_trace', enabled=install_wire_trace(ptz_service, diagnostics))
+    except OSError:
+        pass
     command_worker = PTZCommandWorker(ptz_service, imaging_service, media_profile.token,
-                                      video_source_token, move_timeout=move_timeout)
+                                      video_source_token, move_timeout=move_timeout,
+                                      diagnostics=diagnostics, velocity_spaces=velocity_spaces)
     root = tk.Tk()
     controller = PTZController(root, camera_id, camera_ip)
 
@@ -272,6 +294,7 @@ def main(argv=None):
 
     print("Window ready. Click on the window to select it, then use the indicated keys.")
     root.protocol("WM_DELETE_WINDOW", close_controller)
+    parent_lifetime.bind(root, close_controller)
     command_worker.start()
     root.after(KEY_POLL_INTERVAL_MS, poll_keyboard)
     try:
@@ -282,6 +305,8 @@ def main(argv=None):
         if command_worker.is_alive() or 'not confirmed' in command_worker.status:
             print('Camera stop not confirmed during shutdown')
         root.destroy()
+        if diagnostics is not None:
+            diagnostics.close()
     return 0
 
 

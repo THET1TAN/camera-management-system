@@ -1,148 +1,169 @@
-# Notes de version - Camera v0.2.6 r4 (en validation)
+# Notes de version - Camera v0.2.6 r6 (en validation)
 
 Date : 2026-09-10
 
-## Objectif
+## Révision 6
 
-Corriger le contrôle PTZ au clavier lorsque plusieurs touches sont maintenues.
-Exemple attendu : maintenir Bas + Droite, puis relâcher Bas, conserve seulement
-le mouvement vers la droite, sans devoir relâcher et appuyer de nouveau sur Droite.
+- Les espaces et plages de vitesse de GetConfigurationOptions sont désormais
+  utilisés, avec sélection du défaut annoncé par le profil lorsqu'il est valide.
+  À défaut, un espace générique annoncé ou un autre espace annoncé valide est
+  choisi. Aucune URI non annoncée n'est imposée.
+- Les URI sélectionnées sont ajoutées explicitement à PanTilt et Zoom. Les
+  vitesses normalisées du clavier sont adaptées aux bornes positives et négatives
+  de chaque axe. Sans métadonnées exploitables, les requêtes normalisées restent
+  disponibles comme auparavant.
+- Une trace Zeep relève les trois vitesses dans le XML sérialisé, ainsi que
+  la présence des espaces, sans enregistrer les en-têtes ni les URI privées.
+- Lecture seule de la caméra configurée : elle annonce les vitesses [-1, +1]
+  sur les trois axes, des délais de 1 à 60 secondes et des défauts correspondant
+  aux espaces sélectionnés. Une plage absente n'explique donc pas à elle seule
+  le défaut. L'effet des espaces explicites reste à tester sur la caméra.
+- ContinuousMove et l'état complet le plus récent sont conservés. Aucun pilotage
+  par petits déplacements successifs, aucune manette ni dépendance associée ajoutés.
 
-## Révision 4
+## Commandes PTZ
 
-- Le déplacement Pan/Tilt et le zoom utilisent maintenant deux requêtes
-  ContinuousMove distinctes. Une commande de zoom omet Pan/Tilt; une commande
-  de déplacement omet Zoom. Selon ONVIF 5.3.3, le groupe omis reste actif.
-- Chaque groupe actif a sa propre échéance de renouvellement. Lorsque les deux
-  doivent être mis à jour, ils alternent pour éviter qu'une réponse lente ou
-  des changements fréquents retardent toujours le même mouvement.
-- Les relâchements sont relus entre les requêtes : un zoom relâché pendant la
-  réponse au déplacement ne démarre pas ensuite. Les arrêts restent ciblés.
-- Une erreur de mouvement marque uniquement le groupe concerné comme incertain.
-- La solution reste générique ONVIF : aucun choix selon la marque ou le modèle,
-  aucun SDK propriétaire. Les capacités annoncées par la caméra restent utilisées
-  pour choisir la durée des mouvements. Le titre affiche v0.2.6 r4.
-- Le test simulant une caméra qui applique un seul groupe par requête combinée
-  échouait avant cette modification et réussit maintenant. Ce scénario est une
-  hypothèse de compatibilité; il ne confirme pas le comportement du micrologiciel
-  de la caméra signalée. L'essai matériel de cette révision reste à effectuer.
+Chaque touche physique est suivie indépendamment. Après Bas + Droite, relâcher
+Bas conserve la droite. Les événements Tk et la vérification Win32 toutes les
+30 ms récupèrent les relâchements sans bloquer sur le réseau. Les touches
+équivalentes, les deux Shift et les deux Ctrl restent indépendantes.
 
-## Révision 3
+Un seul thread envoie les requêtes ONVIF et relit la demande actuelle après
+chaque réponse. Les anciens mouvements ne sont pas rejoués. Les relâchements
+et inversions utilisent des arrêts ciblés Pan/Tilt et Zoom avant une éventuelle
+reprise des commandes encore maintenues.
 
-Les changements de directions rapides peuvent survenir pendant une réponse
-ONVIF. Le contrôleur garde maintenant uniquement l'état complet le plus récent
-(pan, tilt, zoom et mise au point), sans file de mouvements à rejouer.
+En r5, le déplacement et le zoom sont envoyés ensemble dans une seule requête
+ContinuousMove, y compris les renouvellements. Les groupes inactifs sont omis.
+La séparation introduite en r4 provoquait une alternance sur l'appareil signalé.
+Un simulateur remplaçant les groupes omis échoue avec la r4 et conserve maintenant
+les trois axes actifs avec la r5.
 
-- Les appels caméra sont exécutés dans un seul thread dédié, afin que Tk puisse
-  continuer à recevoir les touches et vérifier leur état physique toutes les
-  30 ms. Les requêtes réseau restent strictement séquentielles.
-- Après chaque réponse, l'état demandé est relu avant la requête suivante.
-  Un relâchement ou une nouvelle diagonale pendant Stop remplace donc l'ancienne
-  reprise. Aucun verrou de saisie n'est conservé pendant un appel réseau.
-- Les arrêts ciblés Pan/Tilt et Zoom sont conservés. Pan et Tilt partageant un
-  groupe ONVIF, une brève pause reste possible à l'arrêt/reprise.
-- Les mouvements continus reçoivent une durée courte renouvelable, choisie dans
-  la plage annoncée par la caméra (cible : 1 seconde). Si la plage est indisponible,
-  la durée par défaut déclarée est utilisée si possible; sinon le paramètre est
-  omis. Une durée non prise en charge n'est pas imposée.
-- Les renouvellements utilisent la demande actuelle. Si le clavier ne publie
-  plus d'état depuis 0,5 seconde, le thread demande un arrêt.
-- Les opérations réseau ont un délai de réponse configuré de 1 seconde; les
-  erreurs sont retentées avec un délai de 0,2 seconde. Une erreur de mise au point
-  ne bloque pas les demandes d'arrêt PTZ.
-- La perte de focus et la fermeture annulent les demandes en attente, y compris
-  les presets. La fermeture attend les arrêts sans bloquer les événements Tk.
-  Si les arrêts échouent durablement, leur absence de confirmation est signalée.
-- Les deux lignes de diagnostic temporaires ont été
-  retirées de la fenêtre PTZ à la demande de l'utilisateur. Les commandes clavier
-  et le traitement ONVIF conservent le même fonctionnement.
-- La PR #3 reste en brouillon; main reste sur la version précédente.
+Cela retire l'alternance des requêtes introduite par la r4, mais l'utilisateur
+confirme que le cumul reste défaillant sur caméra réelle avec la r5. La trace
+de cet essai montre pan=0,5, tilt=-0,5 et zoom=0,5 demandés ensemble, avec six
+requêtes groupées acquittées successivement, sans Stop entre elles. L'arrêt
+intervient après les relâchements. Le problème n'est donc pas déclaré résolu.
+Le succès des presets indique une capacité mécanique simultanée; il ne prouve
+pas que la même combinaison est acceptée via ContinuousMove.
 
-## Corrections
+La solution reste générique ONVIF, sans condition sur la marque ou le modèle,
+et sans SDK propriétaire. Les durées renouvelables sont choisies dans la plage
+annoncée par la caméra (cible : 1 seconde), avec repli sur son défaut déclaré ou
+implicite si nécessaire. Les capacités effectives restent déterminantes.
 
-- Chaque touche physique est suivie séparément. Le mouvement est recalculé pour
-  chaque axe après les appuis et les relâchements, avec zéro sur les axes inactifs.
-- Sous Windows, vérification des touches maintenues toutes les 30 ms afin de
-  récupérer un événement KeyRelease manqué. Seules les touches activées dans la
-  fenêtre PTZ sont suivies. La saisie ne dépend plus de la durée des appels ONVIF.
-- Les répétitions automatiques et les anciens événements déjà relâchés ne
-  réactivent plus une direction ni ne changent la priorité des touches opposées.
-- Les touches équivalentes (S et Bas, par exemple), les deux Shift et les deux
-  Ctrl restent indépendantes. Relâcher l'une conserve l'autre si elle est tenue.
-- Le relâchement de toutes les touches PTZ envoie maintenant un Stop explicite.
-- La perte du focus de la fenêtre, Échap et sa fermeture effacent les touches
-  mémorisées et demandent l'arrêt du PTZ et de la mise au point.
-- L'état d'une commande ONVIF n'est confirmé qu'après une réponse réussie.
-  En cas d'erreur, les mises à jour suivantes peuvent retenter la commande ou
-  son arrêt, au lieu de considérer la caméra déjà arrêtée.
-- L'aide indique correctement Shift pour zoomer et Ctrl pour dézoomer.
-- La fenêtre PTZ affiche la version v0.2.6 r4.
+Une absence de publications du clavier pendant 0,5 seconde déclenche un arrêt.
+Les opérations réseau ont un délai configuré de 1 seconde et les erreurs sont
+retentées après 0,2 seconde. Perte de focus, Échap et fermeture effacent les touches
+et annulent les presets en attente. Une brève pause reste possible lors d'un
+arrêt/reprise Pan/Tilt, car ONVIF regroupe ces deux axes.
 
-## Organisation
+## Dépendance des fenêtres
 
-- Sources actuelles disponibles à la racine et copiées à l'identique dans
-  ~v0.2.6, avec les ressources, les tests et les scripts d'installation actifs.
-- Les dossiers des anciennes versions restent inchangés.
-- Les bases de caméras, journaux, sauvegardes et exécutables générés sont exclus
-  du nouveau dossier de sources et de la publication GitHub.
-- La base camera_credentials.db existante à la racine reste utilisable.
-- Aucun exécutable n'a été recompilé : lancer python camera_viewer.py à la racine
-  pour utiliser le nouveau contrôleur.
+Camera Viewer suit désormais ses lecteurs vidéo, ses contrôles PTZ et ses
+fenêtres Camera Manager. Camera Manager suit ses propres lecteurs et PTZ.
 
-## Validation effectuée
+La fermeture du parent ferme le canal de vie de chaque enfant. Celui-ci exécute
+sa fermeture habituelle dans le thread Tk. Un contrôleur PTZ demande l'arrêt
+du mouvement et de la mise au point avant de terminer. La disparition du parent
+ferme également le canal. Les fenêtres lancées de façon autonome restent
+indépendantes.
 
-- 60 tests automatisés réussis sous Python 3.14, avec services ONVIF simulés.
-  Le test propre à l'affichage des diagnostics a été retiré avec cet affichage.
+Tous les enfants sont avertis ensemble. Tk reste réactif pendant l'attente;
+un enfant bloqué est terminé de force après 10 secondes. Les fenêtres masquent
+leur interface au début de la fermeture et aucun nouvel enfant ne peut être lancé.
+
+## Trace locale
+
+Le fichier ptz_control_<identifiant-processus>.log est créé à côté du contrôleur.
+Il contient les axes demandés, les requêtes de déplacement/arrêt et leur résultat.
+Une réponse réussie confirme la requête, pas le mouvement physique des moteurs.
+
+La trace est limitée à 256 Kio avec une archive locale de même taille. Elle
+n'enregistre ni adresse caméra, ni identifiant, ni mot de passe, ni jeton de
+profil, ni contenu SOAP. Les erreurs sont limitées au nom de leur classe.
+Une indisponibilité du journal ne bloque pas les commandes d'arrêt.
+Les anciennes lignes de diagnostic restent absentes de la fenêtre PTZ.
+
+## Sources et publication
+
+La clé historique de cette installation est conservée à l'identique dans
+.camera_encryption.key à la racine. Viewer et Manager la lisent via camera_key.py.
+Elle n'est plus inscrite dans les fichiers sources modifiés. La base de caméras
+n'a pas été modifiée et sa clé n'a pas été remplacée. Le dossier ~v0.2.6 peut
+lire le fichier de clé de la racine. Ce fichier reste hors de GitHub.
+
+Pour déployer sur une autre installation existante, conserver sa clé avec la
+base, dans ce fichier local ou CAMERA_ENCRYPTION_KEY. Une installation neuve,
+sans base, génère sa propre clé. Une base existante sans clé provoque un message
+de récupération; aucune clé de remplacement n'est générée silencieusement.
+
+- Version 0.2.6, révision de test r6 affichée dans le titre PTZ.
+- Sources actives identiques à la racine et dans ~v0.2.6, y compris les nouveaux
+  modules child_processes.py et ptz_diagnostics.py et les tests de fermeture.
+- Anciennes versions conservées. Bases de caméras, journaux, sauvegardes et
+  exécutables générés exclus du dossier de sources et de GitHub.
+- Aucun exécutable recompilé. Lancer python camera_viewer.py depuis la racine.
+- PR #3 en brouillon; main conserve la version précédente, sans fusion.
+
+## Validation
+
+- 94 tests automatisés réussis sous Python 3.14 avec services caméra simulés.
+- Clé locale comparée octet par octet avec la valeur précédente. Lecture des
+  clés existantes, configuration par environnement, partage avec le snapshot,
+  création pour une installation neuve et protection des bases sans clé vérifiés.
+- Vérification réelle avec cryptography : les valeurs chiffrées de la base
+  existante se déchiffrent avec la clé locale préservée, en lecture seule.
+- Vérification hors ligne avec onvif-zeep 0.2.12 et Zeep 4.3.3 : une seule requête
+  contient les trois vitesses 0,35 / 0,08 / -0,20, les deux espaces explicites et
+  Timeout=1 seconde; Stop est également sérialisé correctement. Réponses réseau
+  simulées, aucune commande de mouvement envoyée à une caméra pour ce test.
+- Espaces par défaut/génériques, bornes asymétriques, métadonnées invalides,
+  adaptation des vitesses et trace SOAP sans détails privés couverts.
 - 384 combinaisons et ordres d'appui de diagonales avec Shift/Ctrl gauche et
-  droite vérifiés par événements simulés. Cela ne teste pas le clavier physique.
-- Déplacement et zoom simultanés, commandes omettant l'autre groupe, démarrage
-  dans les deux ordres, inversions du zoom, renouvellements indépendants et
-  réponses lentes vérifiés. Simulation d'un appareil respectant les vitesses
-  nulles et les groupes omis, ainsi que des comportements limités décrits ci-dessus.
-- Un test a reproduit le défaut de la révision 2 : relâchement pendant un Stop
-  réussi, puis reprise d'une direction périmée.
-- Tests de relâchement, de nouvelle diagonale et de perte de focus pendant les
-  réponses Stop/ContinuousMove, ainsi que de changements rapides pendant une erreur.
-- Test avec un vrai thread et une réponse Stop volontairement suspendue :
-  200 changements de direction suivis du relâchement complet sont acceptés sans
-  bloquer la saisie; aucune ancienne direction n'est reprise.
-- Simulateur conservant les anciennes vitesses jusqu'à Stop : toutes les
-  diagonales, zoom, focus, arrêts ciblés, reprises, presets et erreurs vérifiés.
-- Durée de mouvement négociée, renouvellements et arrêt lorsque les publications
-  du clavier cessent également vérifiés.
-- Démarrage et fermeture d'une vraie fenêtre Tk masquée, caméra simulée et thread
-  actif : titre, liaisons clavier, lecteur Win32 et arrêt du thread.
-- Syntaxe des sources Python et des tests vérifiée pour Python 3.9.
-- Les corrections de relâchement de la révision 3 ont été jugées meilleures
-  après essai; le cumul diagonale + zoom a ensuite été signalé. La révision 4
-  reste à valider sur caméra. La fusion de la PR attend l'accord de l'utilisateur.
+  droite vérifiés par événements simulés; le clavier physique n'est pas testé.
+- Envoi groupé des axes maintenus, renouvellements sans alternance, relâchements,
+  inversions, erreurs et nouvelles directions pendant les réponses.
+- Alternance de la r4 reproduite dans le simulateur remplaçant les groupes omis;
+  comportement standard ONVIF également couvert.
+- Vrai thread avec Stop suspendu et 200 changements de direction suivis du
+  relâchement complet : aucune ancienne direction reprise.
+- Vrais processus parent/enfant/petit-enfant : propagation de la fermeture.
+- Vrai processus PTZ avec Tk masqué : arrêts Pan/Tilt/Zoom et mise au point
+  vérifiés avant sa sortie provoquée par la fermeture du canal parent.
+- Vraies fenêtres Viewer et Manager avec données/processus simulés : tous leurs
+  types d'enfants reçoivent la fermeture, sans lecture des bases locales.
+- Fermeture forcée d'un enfant bloqué, refus de nouveaux lancements pendant
+  la fermeture et fonctionnement autonome couverts.
+- Trace vérifiée : coordonnées présentes, détails de connexion absents;
+  une erreur du journal ne peut pas empêcher Stop.
+- Démarrage/fermeture Tk, titre r6 et syntaxe Python 3.9 vérifiés.
 
-Commande de test : python -m unittest discover -s tests -v
+Commande : python -m unittest discover -s tests -v
 
-## Vérification sur caméra
+## Essai sur caméra
 
-1. Fermer toute fenêtre PTZ existante, lancer camera_viewer.py depuis la racine
-   et ouvrir le contrôle PTZ. Vérifier la mention v0.2.6 r4 dans le titre.
-2. Maintenir Bas + Droite, relâcher Bas : seule la droite doit continuer.
-3. Refaire l'essai en relâchant Droite : seule la descente doit continuer.
-4. Essayer les autres diagonales, puis ajouter Shift ou Ctrl et relâcher une
-   direction : les commandes encore maintenues doivent rester actives.
-   Maintenir aussi W + D + Shift, puis W + D + Ctrl : déplacement et zoom doivent
-   fonctionner ensemble. Refaire en commençant par le zoom, puis relâcher tour
-   à tour le zoom et les directions. Répéter avec les autres diagonales.
-5. Relâcher toutes les touches : les mouvements doivent s'arrêter.
-6. Pendant un mouvement, changer de fenêtre, puis essayer Échap et la croix
-   de fermeture : la caméra doit s'arrêter à chaque fois.
-7. Enchaîner rapidement plusieurs diagonales opposées, puis ne garder qu'une
-   direction et enfin tout relâcher. Aucune direction relâchée ne doit persister.
+1. Fermer manuellement les anciennes fenêtres PTZ/vidéo/Manager et Camera Viewer.
+   Leurs processus déjà lancés ne peuvent pas recevoir la mise à jour de dépendance.
+2. Relancer camera_viewer.py à la racine, ouvrir un PTZ et vérifier v0.2.6 r6.
+3. Maintenir W + D, ajouter Shift et le garder enfoncé. Refaire avec Ctrl,
+   puis en commençant par le zoom avant d'ajouter les directions.
+4. Relâcher tour à tour chaque touche, essayer les autres diagonales, puis
+   des changements rapides. Les directions relâchées doivent s'arrêter.
+5. Ouvrir plusieurs lecteurs et PTZ, puis Camera Manager et un PTZ depuis
+   celui-ci. Fermer Camera Viewer : toute cette famille doit se fermer et
+   les mouvements doivent s'arrêter.
+6. Si déplacement et zoom alternent encore, conserver le dernier journal
+   ptz_control_*.log pour examiner les commandes de cet essai.
 
-Références techniques :
-- ONVIF PTZ, groupes facultatifs de ContinuousMove (section 5.3.3) :
+Références :
+- ONVIF PTZ, ContinuousMove (5.3.3) et GotoPreset :
   https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v250a.pdf
-- ONVIF PTZ, vitesse nulle par axe :
-  https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v1612.pdf
-- Windows, lecture de l'état physique des touches :
+- Python, canaux de sous-processus et terminaison Windows :
+  https://docs.python.org/3/library/subprocess.html
+- Windows, lecture des touches physiques :
   https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate
-
-- Zeep, délais des opérations réseau :
-  https://docs.python-zeep.org/en/master/transport.html
+- Exemple d'espaces explicites et de vitesse groupée (référence consultée) :
+  https://github.com/partofthething/joy-ptz-cam/blob/main/src/joyptz/cam.py
+- Zeep, inspection du XML à l'envoi :
+  https://docs.python-zeep.org/en/master/plugins.html

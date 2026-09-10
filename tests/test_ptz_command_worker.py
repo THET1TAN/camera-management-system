@@ -1,11 +1,15 @@
 """Camera-state and delayed-network regressions without a physical camera."""
 from datetime import timedelta
+import json
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 from ptz_command_worker import ControlState, PTZCommandWorker, select_move_timeout
+from ptz_diagnostics import PTZDiagnostics
 
 
 class FakeClock:
@@ -17,10 +21,10 @@ class FakeClock:
 
 
 class Camera:
-    """Simulate ONVIF groups, optionally retaining zeros or ignoring a group."""
+    """Simulate standard ONVIF and devices that replace omitted movement groups."""
     def __init__(self):
         self.motion = [0, 0, 0]
-        self.single_group_per_request = False
+        self.replaces_omitted_groups = False
         self.retains_zero = True
         self.focus = 0
         self.calls = []
@@ -35,8 +39,8 @@ class Camera:
 
     def move(self, request):
         velocity = dict(request.Velocity)
-        if self.single_group_per_request and 'PanTilt' in velocity:
-            velocity.pop('Zoom', None)
+        if self.replaces_omitted_groups:
+            self.motion[:] = [0, 0, 0]
         pan_tilt = velocity.get('PanTilt', {})
         values = (pan_tilt.get('x'), pan_tilt.get('y'), velocity.get('Zoom', {}).get('x'))
         self.calls.append(('move', values))
@@ -77,8 +81,8 @@ class WorkerTests(unittest.TestCase):
         self.worker.submit(ControlState(**values))
         self.drain()
 
-    def test_diagonal_and_zoom_on_camera_that_only_applies_one_group_per_request(self):
-        self.camera.single_group_per_request = True
+    def test_diagonal_and_zoom_on_camera_that_replaces_omitted_groups(self):
+        self.camera.replaces_omitted_groups = True
         for pan in (-0.5, 0.5):
             for tilt in (-0.5, 0.5):
                 for zoom in (-0.5, 0.5):
@@ -87,11 +91,11 @@ class WorkerTests(unittest.TestCase):
                         self.send(pan=pan, tilt=tilt, zoom=zoom)
                         self.assertEqual(self.camera.motion, [pan, tilt, zoom])
 
-    def test_starting_zoom_preserves_diagonal_and_omits_pan_tilt(self):
+    def test_starting_zoom_transmits_the_held_diagonal_in_the_same_request(self):
         self.send(pan=0.5, tilt=-0.5)
         self.send(pan=0.5, tilt=-0.5, zoom=0.5)
         request = self.camera.ptz.ContinuousMove.call_args.args[0]
-        self.assertEqual(request.Velocity, {'Zoom': {'x': 0.5}})
+        self.assertEqual(request.Velocity, {'PanTilt': {'x': 0.5, 'y': -0.5}, 'Zoom': {'x': 0.5}})
         self.assertEqual(self.camera.motion, [0.5, -0.5, 0.5])
         self.camera.ptz.Stop.assert_not_called()
 
@@ -110,25 +114,26 @@ class WorkerTests(unittest.TestCase):
                         self.send()
                         self.assertEqual(self.camera.motion, [0, 0, 0])
 
-    def test_starting_diagonal_preserves_zoom_and_omits_zoom(self):
+    def test_starting_diagonal_transmits_held_zoom_in_the_same_request(self):
         self.send(zoom=-0.5)
         self.send(pan=-0.5, tilt=0.5, zoom=-0.5)
         request = self.camera.ptz.ContinuousMove.call_args.args[0]
-        self.assertEqual(request.Velocity, {'PanTilt': {'x': -0.5, 'y': 0.5}})
+        self.assertEqual(request.Velocity, {'PanTilt': {'x': -0.5, 'y': 0.5}, 'Zoom': {'x': -0.5}})
         self.assertEqual(self.camera.motion, [-0.5, 0.5, -0.5])
         self.camera.ptz.Stop.assert_not_called()
 
-    def test_each_group_renews_its_own_timeout(self):
+    def test_renewals_keep_all_held_controls_together_without_alternation(self):
+        self.camera.replaces_omitted_groups = True
         self.send(pan=0.5, tilt=0.5)
         self.clock.now = 0.2
         self.send(pan=0.5, tilt=0.5, zoom=0.5)
         self.clock.now = 0.4
         self.send(pan=0.5, tilt=0.5, zoom=0.5)
-        self.assertEqual(self.camera.calls[-1], ('move', (0.5, 0.5, None)))
+        self.assertEqual(self.camera.calls[-1], ('move', (0.5, 0.5, 0.5)))
         self.clock.now = 0.6
         self.send(pan=0.5, tilt=0.5, zoom=0.5)
-        self.assertEqual(self.camera.calls[-1], ('move', (None, None, 0.5)))
-        self.assertEqual(self.camera.ptz.ContinuousMove.call_count, 4)
+        self.assertEqual(self.camera.calls[-1], ('move', (0.5, 0.5, 0.5)))
+        self.assertEqual(self.camera.ptz.ContinuousMove.call_count, 3)
         self.assertEqual(self.camera.motion, [0.5, 0.5, 0.5])
 
     def test_slow_replies_do_not_starve_either_active_group(self):
@@ -143,14 +148,15 @@ class WorkerTests(unittest.TestCase):
         self.worker.submit(state)
         for _ in range(6):
             self.worker.step()
-        self.assertEqual(self.camera.calls, [
-            ('move', (0.5, -0.5, None)), ('move', (None, None, 0.5))] * 3)
+            self.clock.now += 0.4
+            self.worker.submit(state)
+        self.assertEqual(self.camera.calls, [('move', (0.5, -0.5, 0.5))] * 6)
         self.assertEqual(self.camera.motion, [0.5, -0.5, 0.5])
         self.worker.submit(ControlState())
         self.drain()
         self.assertEqual(self.camera.motion, [0, 0, 0])
 
-    def test_zoom_released_during_pan_reply_never_starts(self):
+    def test_zoom_released_during_combined_reply_stops_without_replaying_it(self):
         def move_then_release_zoom(request):
             self.camera.move(request)
             self.worker.submit(ControlState(pan=0.5, tilt=-0.5))
@@ -159,25 +165,37 @@ class WorkerTests(unittest.TestCase):
         self.send(pan=0.5, tilt=-0.5, zoom=0.5)
         self.assertEqual(self.camera.motion, [0.5, -0.5, 0])
         self.camera.ptz.ContinuousMove.assert_called_once()
+        self.assertEqual(self.camera.calls[-1], ('stop', False, True))
 
     def test_zoom_reversal_preserves_diagonal(self):
         self.send(pan=0.5, tilt=-0.5, zoom=0.5)
         self.send(pan=0.5, tilt=-0.5, zoom=-0.5)
         self.assertEqual(self.camera.calls[-2:], [
-            ('stop', False, True), ('move', (None, None, -0.5))])
+            ('stop', False, True), ('move', (0.5, -0.5, -0.5))])
         self.assertEqual(self.camera.motion, [0.5, -0.5, -0.5])
 
     def test_failed_zoom_request_does_not_mark_pan_tilt_unknown(self):
-        self.send(pan=0.5, tilt=-0.5)
         self.camera.ptz.ContinuousMove.side_effect = RuntimeError('timeout')
-        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
-        self.assertEqual(self.worker.motion, (0.5, -0.5, None))
-        self.worker.submit(ControlState(pan=0.5, tilt=-0.5))
+        self.send(zoom=0.5)
+        self.assertEqual(self.worker.motion, (0, 0, None))
+        self.worker.submit(ControlState())
         self.clock.now += 0.21
         self.camera.ptz.ContinuousMove.side_effect = self.camera.move
         self.drain()
-        self.assertEqual(self.camera.calls[-1], ('stop', False, True))
-        self.assertEqual(self.camera.motion, [0.5, -0.5, 0])
+        self.assertEqual(self.camera.calls[-1], ('stop', True, True))
+        self.assertEqual(self.camera.motion, [0, 0, 0])
+
+    def test_failed_combined_request_stops_all_groups_before_resuming_latest(self):
+        self.camera.ptz.ContinuousMove.side_effect = RuntimeError('timeout')
+        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
+        self.assertEqual(self.worker.motion, (None, None, None))
+        self.worker.submit(ControlState(pan=0.5))
+        self.clock.now += 0.21
+        self.camera.ptz.ContinuousMove.side_effect = self.camera.move
+        self.drain()
+        self.assertEqual(self.camera.calls, [
+            ('stop', True, True), ('move', (0.5, 0, None))])
+        self.assertEqual(self.camera.motion, [0.5, 0, 0])
 
     def test_diagonal_release_stops_group_then_resumes_each_remaining_axis(self):
         for pan in (-0.5, 0.5):
@@ -267,7 +285,7 @@ class WorkerTests(unittest.TestCase):
         self.send(pan=0.5, tilt=-0.5, zoom=0.5)
         self.camera.ptz.Stop.side_effect = RuntimeError('timeout')
         self.send(pan=0.5, zoom=0.5)
-        self.assertEqual(self.camera.ptz.ContinuousMove.call_count, 2)
+        self.camera.ptz.ContinuousMove.assert_called_once()
         self.assertEqual(self.worker.motion[2], 0.5)
         self.clock.now += 0.21
         self.camera.ptz.Stop.side_effect = self.camera.stop
@@ -435,6 +453,44 @@ class TimeoutTests(unittest.TestCase):
 
     def test_missing_capabilities_do_not_invent_unsupported_timeout(self):
         self.assertIsNone(select_move_timeout(Mock(), SimpleNamespace()))
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def test_trace_records_requested_axes_and_results_without_private_details(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'ptz.log'
+            diagnostics = PTZDiagnostics(path)
+            camera = Camera()
+            worker = PTZCommandWorker(camera.ptz, camera.imaging, 'private-profile',
+                                      'private-source', diagnostics=diagnostics)
+            try:
+                worker.submit(ControlState(pan=0.5, tilt=0.5, zoom=0.5))
+                worker.step()
+                camera.ptz.Stop.side_effect = RuntimeError('private-password private-address')
+                worker.halt()
+                worker.step()  # Focus halt.
+                worker.step()  # PTZ halt fails; only the exception class is logged.
+            finally:
+                diagnostics.close()
+            data = path.read_text()
+            self.assertNotIn('private-', data)
+            records = [json.loads(line) for line in data.splitlines()]
+            move = next(record for record in records if record['event'] == 'move_send')
+            self.assertEqual((move['pan'], move['tilt'], move['zoom']), (0.5, 0.5, 0.5))
+            self.assertIn('move_accepted', [record['event'] for record in records])
+            self.assertEqual(records[-1]['error_type'], 'RuntimeError')
+
+    def test_trace_failure_cannot_prevent_camera_stop(self):
+        camera = Camera()
+        diagnostics = Mock()
+        diagnostics.record.side_effect = OSError('disk full')
+        worker = PTZCommandWorker(camera.ptz, camera.imaging, 'profile', 'source',
+                                  diagnostics=diagnostics)
+        worker.submit(ControlState(pan=0.5, tilt=0.5, zoom=0.5))
+        worker.step()
+        worker.submit(ControlState())
+        worker.step()
+        self.assertEqual(camera.motion, [0, 0, 0])
 
 
 if __name__ == '__main__':

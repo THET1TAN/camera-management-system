@@ -7,9 +7,11 @@ import threading
 import subprocess
 import sys
 import shutil
+from child_processes import ChildProcesses, parent_lifetime
+from camera_key import load_encryption_key
 
-# Encryption key (should be kept secret)
-ENCRYPTION_KEY = b'g4ZltE3Vv2Xzq5y6Lq3l4f8Ozt2Ck2Tk6v5b0rN2ghE=' # implémenter un system de clé d'utilisateur pour chaque administrateurs et un gui (dans un scripte séparé) pour la gestion des clés
+# Keep the installation key outside the published source files.
+ENCRYPTION_KEY = load_encryption_key(os.path.dirname(__file__))
  
 
 # Database file
@@ -172,7 +174,8 @@ def migrate_existing_data():
 class CameraApp:
     def __init__(self, root):
         self.root = root
-        self.processes = []  # Liste pour stocker les sous-processus
+        self.children = ChildProcesses(root)
+        parent_lifetime.bind(root, self.on_closing)
         
         # Configuration du conteneur principal
         self.root.grid_rowconfigure(0, weight=1)
@@ -393,13 +396,12 @@ class CameraApp:
             return
         
         decrypted_password = cipher.decrypt(camera[3]).decode()
-        process = subprocess.Popen([python_exe, 
+        self.children.spawn([python_exe,
                                   os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py'),
                                   str(camera[0]),  # ID de la caméra en premier argument
                                   camera[1],       # Adresse IP
                                   camera[2],       # Username
                                   decrypted_password])
-        self.processes.append(process)
 
     def play_ptz_thread(self, camera):
         python_exe = get_python39()
@@ -407,23 +409,12 @@ class CameraApp:
             messagebox.showerror("Error", "Python 3.9 is required for PTZ")
             return
         decrypted_password = cipher.decrypt(camera[3]).decode()
-        subprocess.Popen([python_exe,
+        self.children.spawn([python_exe,
                           os.path.join(os.path.dirname(__file__), 'ptz_keyboard_control.py'),
                           str(camera[0]), camera[1], camera[2], decrypted_password])
 
     def on_closing(self):
-        # Terminer tous les sous-processus
-        for process in self.processes:
-            try:
-                process.terminate()  # Envoyer un signal de terminaison
-                process.wait(timeout=1)  # Attendre la fin du processus
-            except subprocess.TimeoutExpired:
-                process.kill()  # Forcer la fermeture si le processus ne répond pas
-            except Exception as e:
-                print(f"Erreur lors de la fermeture du processus : {e}")
-
-        # Fermer la fenêtre principale
-        self.root.destroy()
+        self.children.close()
 
     def focus_previous(self, event):
         event.widget.tk_focusPrev().focus_set()
