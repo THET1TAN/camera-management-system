@@ -34,9 +34,9 @@ ONVIF. Le contrôleur garde maintenant uniquement l'état complet le plus récen
 - La perte de focus et la fermeture annulent les demandes en attente, y compris
   les presets. La fermeture attend les arrêts sans bloquer les événements Tk.
   Si les arrêts échouent durablement, leur absence de confirmation est signalée.
-- Le titre affiche v0.2.6 r3. Les lignes de diagnostic distinguent la demande du
-  clavier de la réponse caméra; une réponse acceptée ne confirme pas le mouvement
-  physique. Seul le thread de l'interface accède aux éléments Tk.
+- Le titre affiche v0.2.6 r3. Les deux lignes de diagnostic temporaires ont été
+  retirées de la fenêtre PTZ à la demande de l'utilisateur. Les commandes clavier
+  et le traitement ONVIF conservent le même fonctionnement.
 - La PR #3 reste en brouillon; main reste sur la version précédente.
 
 ## Corrections
@@ -72,7 +72,8 @@ ONVIF. Le contrôleur garde maintenant uniquement l'état complet le plus récen
 
 ## Validation effectuée
 
-- 51 tests automatisés réussis sous Python 3.14, avec services ONVIF simulés.
+- 50 tests automatisés réussis sous Python 3.14, avec services ONVIF simulés.
+  Le test propre à l'affichage des diagnostics a été retiré avec cet affichage.
 - Un test a reproduit le défaut de la révision 2 : relâchement pendant un Stop
   réussi, puis reprise d'une direction périmée.
 - Tests de relâchement, de nouvelle diagonale et de perte de focus pendant les
@@ -85,9 +86,10 @@ ONVIF. Le contrôleur garde maintenant uniquement l'état complet le plus récen
 - Durée de mouvement négociée, renouvellements et arrêt lorsque les publications
   du clavier cessent également vérifiés.
 - Démarrage et fermeture d'une vraie fenêtre Tk masquée, caméra simulée et thread
-  actif : titre, liaisons clavier, diagnostic, lecteur Win32 et arrêt du thread.
+  actif : titre, liaisons clavier, lecteur Win32 et arrêt du thread.
 - Syntaxe des sources Python et des tests vérifiée pour Python 3.9.
-- La révision 3 reste à valider sur la caméra physique de l'utilisateur.
+- Après son essai, l'utilisateur indique que la révision 3 semble fonctionner
+  correctement. La fusion de la PR reste en attente de son accord.
 
 Commande de test : python -m unittest discover -s tests -v
 
@@ -104,9 +106,6 @@ Commande de test : python -m unittest discover -s tests -v
    de fermeture : la caméra doit s'arrêter à chaque fois.
 7. Enchaîner rapidement plusieurs diagonales opposées, puis ne garder qu'une
    direction et enfin tout relâcher. Aucune direction relâchée ne doit persister.
-8. Si le problème persiste, relever les lignes Keyboard request et PTZ request
-   lorsque Bas est relâché : tilt doit être +0.0 tandis que pan reste +0.5
-   à la vitesse initiale. Relever aussi une éventuelle erreur de Stop affichée.
 
 Références techniques :
 - ONVIF PTZ, vitesse nulle par axe :

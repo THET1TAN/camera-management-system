@@ -8,8 +8,6 @@ VERSION = "0.2.6"
 REVISION = 3
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
-requested_motion_var = None
-ptz_command_var = None
 command_worker = None
 closing = False
 window_active = False
@@ -104,8 +102,6 @@ def update_controls():
     keyboard.synchronize(key_is_down)
     pan, tilt, zoom = (direction * speed for direction in keyboard.get_movement())
     focus = keyboard.get_focus() * speed
-    if requested_motion_var is not None:
-        requested_motion_var.set(f"Keyboard request: pan {pan:+.1f}, tilt {tilt:+.1f}, zoom {zoom:+.1f}")
     command_worker.submit(ControlState(pan, tilt, zoom, focus, preset_request))
 
 
@@ -150,8 +146,6 @@ def poll_keyboard():
     if closing:
         return
     update_controls()
-    if ptz_command_var is not None:
-        ptz_command_var.set(command_worker.status)
     root.after(KEY_POLL_INTERVAL_MS, poll_keyboard)
 
 
@@ -173,8 +167,6 @@ def close_controller():
 
 
 def finish_close():
-    if ptz_command_var is not None:
-        ptz_command_var.set(command_worker.status)
     if command_worker.is_alive():
         root.after(KEY_POLL_INTERVAL_MS, finish_close)
     else:
@@ -215,7 +207,7 @@ class PTZController:
 
 def main(argv=None):
     global root, command_worker, speed_value_label, speed_progress, key_is_down
-    global requested_motion_var, ptz_command_var, closing, window_active, preset_request
+    global closing, window_active, preset_request
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 4:
         print("Usage: ptz_keyboard_control.py camera_id ip username password")
@@ -256,12 +248,6 @@ def main(argv=None):
         "Numbers 1-9: Presets\nEsc: Exit"
     ))
     info_label.pack(padx=20, pady=20)
-
-    # Distinguer le relâchement détecté au clavier de la réponse ONVIF.
-    requested_motion_var = tk.StringVar(root, value="Keyboard request: idle")
-    ptz_command_var = tk.StringVar(root, value="PTZ request: idle")
-    tk.Label(root, textvariable=requested_motion_var).pack(padx=20)
-    tk.Label(root, textvariable=ptz_command_var).pack(padx=20)
 
     # Création du frame pour la vitesse
     speed_frame = tk.Frame(root, bd=2, relief=tk.GROOVE)

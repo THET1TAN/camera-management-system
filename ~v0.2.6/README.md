@@ -15,8 +15,6 @@ When an axis is released or reversed, the controller explicitly stops its ONVIF
 group before resuming the remaining directions. This also handles devices that
 keep an old velocity when sent a zero component. Pan and tilt share one stop
 group, so that transition can cause a brief pause; zoom is stopped separately.
-The window displays the keyboard request and whether the PTZ command was accepted
-or failed. An accepted command does not confirm the camera's physical movement.
 
 Revision 3 processes ONVIF requests in one background worker so the keyboard
 remains responsive during network calls. Only the latest complete input state is
@@ -32,7 +30,7 @@ Renewals always use current input. Network operation timeouts and retry delays
 also keep errors from blocking the keyboard.
 
 Close the PTZ window and reopen it to load this revision. Its title must contain
-`v0.2.6 r3`. This version is awaiting camera validation in
+`v0.2.6 r3`. This version is available for review in
 [PR #3](https://github.com/THET1TAN/camera-management-system/pull/3).
 
 The current source files are at the repository root, with an identical source

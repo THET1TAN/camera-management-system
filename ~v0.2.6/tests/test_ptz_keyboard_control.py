@@ -86,12 +86,11 @@ class KeyboardTests(unittest.TestCase):
 class UICommandTests(unittest.TestCase):
     def setUp(self):
         self.worker = Mock()
-        self.worker.status = 'PTZ request accepted'
         self.root = Mock()
         self.held = set()
         self.state = patch.multiple(ptz, create=True, keyboard=ptz.KeyboardManager(),
             command_worker=self.worker, root=self.root, key_is_down=self.held.__contains__,
-            requested_motion_var=Mock(), ptz_command_var=Mock(), closing=False,
+            closing=False,
             window_active=True, preset_request=None, preset_sequence=0, speed=0.5,
             speed_value_label=Mock(), speed_progress={})
         self.state.start()
@@ -190,11 +189,6 @@ class UICommandTests(unittest.TestCase):
         self.assertEqual(self.desired().preset, preset)
         self.press('Right', 39)
         self.assertIsNone(self.desired().preset)
-
-    def test_status_is_copied_to_tk_only_by_poll(self):
-        ptz.poll_keyboard()
-        ptz.ptz_command_var.set.assert_called_with('PTZ request accepted')
-
 
 class PlatformTests(unittest.TestCase):
     def test_windows_modifier_sides_have_distinct_codes(self):
