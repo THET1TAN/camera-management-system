@@ -5,7 +5,7 @@ import sys
 from ptz_command_worker import ControlState, PTZCommandWorker, select_move_timeout
 
 VERSION = "0.2.6"
-REVISION = 3
+REVISION = 4
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
 command_worker = None

@@ -1,5 +1,6 @@
 """PTZ regressions: no camera, credentials, or ONVIF installation required."""
 import unittest
+from itertools import permutations
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -120,6 +121,27 @@ class UICommandTests(unittest.TestCase):
         self.press('shift', 16)
         self.assertEqual(self.worker.submit.call_count, before + 1)
         self.assertEqual(self.desired(), ptz.ControlState(pan=0.5, zoom=0.5, focus=0.5))
+
+    def test_diagonal_and_zoom_survive_every_key_order_and_modifier_side(self):
+        horizontals = [('Left', 37, -0.5), ('Right', 39, 0.5), ('a', 65, -0.5), ('d', 68, 0.5)]
+        verticals = [('Up', 38, 0.5), ('Down', 40, -0.5), ('w', 87, 0.5), ('s', 83, -0.5)]
+        modifiers = [('Shift_L', 160, 0.5), ('Shift_R', 161, 0.5),
+                     ('Control_L', 162, -0.5), ('Control_R', 163, -0.5)]
+        with patch.object(ptz.sys, 'platform', 'win32'):
+            for horizontal in horizontals:
+                for vertical in verticals:
+                    for modifier in modifiers:
+                        for order in permutations([horizontal, vertical, modifier]):
+                            with self.subTest(order=order):
+                                self.held.clear()
+                                ptz.keyboard.clear()
+                                for key, code, _ in order:
+                                    self.press(key, code)
+                                ptz.poll_keyboard()
+                                self.assertEqual(self.desired().motion,
+                                                 (horizontal[2], vertical[2], modifier[2]))
+                                self.release(modifier[0], modifier[1])
+                                self.assertEqual(self.desired().motion, (horizontal[2], vertical[2], 0))
 
     def test_poll_recovers_missing_release_without_network_io(self):
         self.press('Down', 40)

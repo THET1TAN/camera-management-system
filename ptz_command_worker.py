@@ -68,7 +68,8 @@ class PTZCommandWorker:
         self.focus = 0
         self._preset_done = None
         self._preset_active = False
-        self._renew_at = 0
+        self._renew_at = [0, 0]  # Pan/Tilt and Zoom have independent leases.
+        self._last_move_group = 1
         self._ptz_retry_at = self._focus_retry_at = 0
 
     @property
@@ -145,23 +146,30 @@ class PTZCommandWorker:
         self._report('PTZ stop accepted: ' + ('pan/tilt + zoom' if pan_tilt and zoom
                                             else 'pan/tilt' if pan_tilt else 'zoom'))
 
-    def _move(self, motion):
+    def _move(self, motion, group):
+        pan_tilt = group == 0
         try:
             request = self.ptz.create_type('ContinuousMove')
             request.ProfileToken = self.profile_token
-            request.Velocity = {'PanTilt': {'x': motion[0], 'y': motion[1]},
-                                'Zoom': {'x': motion[2]}}
+            # ONVIF 5.3.3: an omitted group keeps its current movement. Separate
+            # requests also accommodate devices that only apply one group from
+            # a combined payload. Never send a zero placeholder for the other.
+            request.Velocity = ({'PanTilt': {'x': motion[0], 'y': motion[1]}}
+                                if pan_tilt else {'Zoom': {'x': motion[2]}})
             if self.move_timeout is not None:
                 request.Timeout = timedelta(seconds=self.move_timeout)
             self.ptz.ContinuousMove(request)
         except Exception as error:
-            self.motion = (None, None, None)
+            self.motion = ((None, None, self.motion[2]) if pan_tilt
+                           else (*self.motion[:2], None))
             self._ptz_failed('ContinuousMove', error)
             return
-        self.motion = motion
+        self.motion = ((*motion[:2], self.motion[2]) if pan_tilt
+                       else (*self.motion[:2], motion[2]))
+        self._last_move_group = group
         # Renewal is never a queued copy; the next step reads the latest state.
-        self._renew_at = self.clock() + (self.move_timeout / 3 if self.move_timeout else 0.25)
-        self._report('PTZ request accepted: pan {:+.1f}, tilt {:+.1f}, zoom {:+.1f}'.format(*motion))
+        self._renew_at[group] = self.clock() + (self.move_timeout / 3 if self.move_timeout else 0.25)
+        self._report('PTZ request accepted: ' + ('pan/tilt' if pan_tilt else 'zoom'))
 
     def _ptz_failed(self, operation, error):
         self._ptz_retry_at = self.clock() + self.RETRY_SECONDS
@@ -226,9 +234,18 @@ class PTZCommandWorker:
         if stop_pt or stop_zoom:
             self._stop_ptz(stop_pt, stop_zoom)
             return True
-        if self.motion != desired.motion or self.clock() >= self._renew_at:
-            self._move(desired.motion)
-            return True
+        pending = (
+            desired.motion[:2] != (0, 0) and
+            (self.motion[:2] != desired.motion[:2] or self.clock() >= self._renew_at[0]),
+            desired.zoom != 0 and
+            (self.motion[2] != desired.zoom or self.clock() >= self._renew_at[1]),
+        )
+        # If both need updating, alternate so slow replies or frequent changes
+        # cannot continually postpone the other group's renewal.
+        for group in (1 - self._last_move_group, self._last_move_group):
+            if pending[group]:
+                self._move(desired.motion, group)
+                return True
         return False
 
     def step(self):

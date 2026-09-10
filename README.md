@@ -2,7 +2,7 @@
 
 A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
 
-## Test version: v0.2.6 r3
+## Test version: v0.2.6 r4
 
 Keyboard PTZ control now tracks each held key independently. For example, hold
 Down + Right, then release Down: the camera receives a horizontal-only command
@@ -15,6 +15,15 @@ When an axis is released or reversed, the controller explicitly stops its ONVIF
 group before resuming the remaining directions. This also handles devices that
 keep an old velocity when sent a zero component. Pan and tilt share one stop
 group, so that transition can cause a brief pause; zoom is stopped separately.
+
+Pan/tilt and zoom now use separate ONVIF ContinuousMove requests, so holding a
+diagonal and Shift/Ctrl can keep both movements active. Each request omits the
+other group, which ONVIF specifies must retain its current movement. Each active
+group has its own renewal schedule; requests alternate when both need updating.
+This uses the standard protocol without manufacturer-specific branches or SDKs.
+The change is covered by simulated cameras with standard behavior and with
+limited handling of combined requests; physical camera validation is pending.
+See [ONVIF PTZ section 5.3.3](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v250a.pdf).
 
 Revision 3 processes ONVIF requests in one background worker so the keyboard
 remains responsive during network calls. Only the latest complete input state is
@@ -30,7 +39,7 @@ Renewals always use current input. Network operation timeouts and retry delays
 also keep errors from blocking the keyboard.
 
 Close the PTZ window and reopen it to load this revision. Its title must contain
-`v0.2.6 r3`. This version is available for review in
+`v0.2.6 r4`. This version is available for review in
 [PR #3](https://github.com/THET1TAN/camera-management-system/pull/3).
 
 The current source files are at the repository root, with an identical source
@@ -44,7 +53,7 @@ Camera databases, logs and generated executables are not part of the snapshot.
 - **📺 Camera Viewer**: Browse and play camera streams with an intuitive GUI
 - **🎮 PTZ Control**: Real-time Pan-Tilt-Zoom control with keyboard shortcuts
 - **🔧 Camera Manager**: Add, edit, and delete camera configurations
-- **📡 ONVIF Support**: Full compatibility with ONVIF-compliant cameras
+- **📡 ONVIF Support**: Standard camera services, subject to the capabilities supported by each device
 - **💾 SQLite Database**: Lightweight local database for camera storage
 - **🖱️ User-Friendly Interface**: Clean Tkinter-based GUI for all operations
 
