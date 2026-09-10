@@ -24,7 +24,7 @@ _UNREAD_OPTIONS = object()
 
 
 def select_move_timeout(service, profile, options=_UNREAD_OPTIONS):
-    """Choose a short duration inside the camera's advertised timeout range."""
+    """Prefer the device's declared duration; validate it against its range."""
     def seconds(value, allow_zero=False):
         try:
             result = float(value.total_seconds())
@@ -40,6 +40,8 @@ def select_move_timeout(service, profile, options=_UNREAD_OPTIONS):
         minimum = seconds(options.PTZTimeout.Min, allow_zero=True)
         maximum = seconds(options.PTZTimeout.Max)
         if minimum is not None and maximum is not None and minimum <= maximum:
+            if default is not None and minimum <= default <= maximum:
+                return default
             return max(minimum, min(1.0, maximum))
     except Exception:
         pass
@@ -53,7 +55,7 @@ class PTZCommandWorker:
 
     def __init__(self, ptz, imaging, profile_token, source_token,
                  move_timeout=None, clock=time.monotonic, diagnostics=None, velocity_spaces=None,
-                 conservative_stops=False):
+                 conservative_stops=True):
         self.ptz = ptz
         self.imaging = imaging
         self.profile_token = profile_token

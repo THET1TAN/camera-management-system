@@ -402,7 +402,8 @@ class SmoothWorkerTests(unittest.TestCase):
         self.camera.retains_zero = False
         self.clock = FakeClock()
         self.worker = PTZCommandWorker(self.camera.ptz, self.camera.imaging,
-                                       'profile', 'source', move_timeout=1, clock=self.clock)
+                                       'profile', 'source', move_timeout=1, clock=self.clock,
+                                       conservative_stops=False)
 
     def send(self, **values):
         self.worker.submit(ControlState(**values))
@@ -607,6 +608,64 @@ class ThreadTests(unittest.TestCase):
 
 
 class TimeoutTests(unittest.TestCase):
+    def test_native_timeout_is_used_when_inside_advertised_range(self):
+        options = SimpleNamespace(PTZTimeout=SimpleNamespace(
+            Min=timedelta(seconds=1), Max=timedelta(seconds=60)))
+        profile = SimpleNamespace(PTZConfiguration=SimpleNamespace(
+            token='configuration', DefaultPTZTimeout=timedelta(seconds=60)))
+        service = Mock()
+        timeout = select_move_timeout(service, profile, options=options)
+        self.assertEqual(timeout, 60)
+        service.GetConfigurationOptions.assert_not_called()
+
+        camera, clock = Camera(), FakeClock()
+        worker = PTZCommandWorker(camera.ptz, camera.imaging, 'profile', 'source',
+                                  move_timeout=timeout, clock=clock)
+        # No repeated identical request or artificial one-second expiry during
+        # a five-second hold with a camera declaring a 60-second native timeout.
+        for tick in range(51):
+            clock.now = tick / 10
+            worker.submit(ControlState(pan=0.5, tilt=-0.5, zoom=0.5))
+            worker.step()
+        camera.ptz.ContinuousMove.assert_called_once()
+        request = camera.ptz.ContinuousMove.call_args.args[0]
+        self.assertEqual(request.Timeout, timedelta(seconds=60))
+        self.assertEqual(camera.motion, [0.5, -0.5, 0.5])
+        worker.submit(ControlState())
+        worker.step()
+        self.assertEqual(camera.calls[-1], ('stop', True, True))
+        self.assertEqual(clock.now, 5)
+
+    def test_native_timeout_does_not_delay_input_lease_stop(self):
+        camera, clock = Camera(), FakeClock()
+        worker = PTZCommandWorker(camera.ptz, camera.imaging, 'profile', 'source',
+                                  move_timeout=60, clock=clock)
+        worker.submit(ControlState(pan=0.5, tilt=-0.5, zoom=0.5))
+        worker.step()
+        clock.now = 0.51
+        worker.step()
+        self.assertEqual(camera.calls[-1], ('stop', True, True))
+        self.assertEqual(camera.motion, [0, 0, 0])
+
+    def test_default_mode_stops_zero_ignoring_camera_before_resuming(self):
+        camera, clock = Camera(), FakeClock()
+        worker = PTZCommandWorker(camera.ptz, camera.imaging, 'profile', 'source',
+                                  move_timeout=60, clock=clock)
+        worker.submit(ControlState(pan=0.5, tilt=-0.5, zoom=0.5))
+        worker.step()
+        worker.submit(ControlState(pan=0.5, zoom=0.5))
+        worker.step()
+        worker.step()
+        self.assertEqual(camera.calls[-2:], [('stop', True, False), ('move', (0.5, 0, 0.5))])
+        self.assertEqual(camera.motion, [0.5, 0, 0.5])
+
+    def test_invalid_default_falls_back_inside_supported_range(self):
+        options = SimpleNamespace(PTZTimeout=SimpleNamespace(
+            Min=timedelta(seconds=1), Max=timedelta(seconds=10)))
+        profile = SimpleNamespace(PTZConfiguration=SimpleNamespace(
+            token='configuration', DefaultPTZTimeout=timedelta(seconds=60)))
+        self.assertEqual(select_move_timeout(Mock(), profile, options=options), 1)
+
     def test_duration_is_clamped_to_advertised_range(self):
         for minimum, maximum, expected in [(0, 10, 1), (0.1, 10, 1), (2, 10, 2), (0.1, 0.4, 0.4)]:
             service = Mock()

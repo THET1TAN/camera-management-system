@@ -10,7 +10,7 @@ from ptz_diagnostics import PTZDiagnostics, install_wire_trace
 from ptz_velocity import VelocitySpaces
 
 VERSION = "0.2.6"
-REVISION = 7
+REVISION = 8
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
 command_worker = None
@@ -236,8 +236,8 @@ def main(argv=None):
             options = None
         move_timeout = select_move_timeout(ptz_service, media_profile, options=options)
         velocity_spaces = VelocitySpaces.from_options(configuration, options)
-        conservative_stops = os.environ.get('CAMERA_PTZ_CONSERVATIVE_STOPS', '').strip().lower() in (
-            '1', 'true', 'yes', 'on')
+        conservative_stops = os.environ.get('CAMERA_PTZ_CONSERVATIVE_STOPS', '1').strip().lower() not in (
+            '0', 'false', 'no', 'off')
     except Exception as e:
         print(f"Error connecting to camera: {e}")
         return 1

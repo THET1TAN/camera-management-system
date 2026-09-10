@@ -2,90 +2,68 @@
 
 A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
 
-## Test version: v0.2.6 r7
+## Test version: v0.2.6 r8
 
-Keyboard PTZ control now tracks each held key independently. For example, hold
-Down + Right, then release Down: the camera receives a horizontal-only command
-while Right remains held. Windows also checks held keys every 30 ms to recover
-missed release events. Releasing all PTZ keys sends an explicit ONVIF stop;
-leaving the control window or closing it clears all held controls and requests
-both PTZ and focus stops.
+Keyboard PTZ control tracks each held physical key independently and recovers
+missed release events under Windows. A single background worker keeps only the
+latest complete input state and rereads it after each network response. Rapid
+changes cannot build a queue of obsolete movements.
 
-Releasing or reversing an axis now updates the complete velocity directly.
-Released axes are explicitly zeroed in that request while held axes keep moving.
-This removes the intermediate Pan/Tilt Stop that paused the remaining direction
-for approximately 220–270 ms in the reported r6 session. A full Stop still handles
-complete release, loss of focus, shutdown, preset cancellation and uncertain state
-after an error. For devices that ignore zero velocity, the previous stop/resume
-behavior remains available with `CAMERA_PTZ_CONSERVATIVE_STOPS=1` before launch.
+Revision 8 restores targeted Stop before resuming held axes on a release or
+reversal. The direct zero-velocity transitions tried in r7 reintroduced a held
+direction on the reported camera. Stop remains the default for compatibility.
+Pan and tilt share a stop group; the resulting pause remains, with Stop responses
+of about 220–270 ms measured in the r6 trace. Devices verified to honor zero
+velocity can opt into direct transitions with `CAMERA_PTZ_CONSERVATIVE_STOPS=0`.
 
-Pan/tilt and zoom are transmitted together in one ONVIF ContinuousMove request,
-including every renewal. The separate requests used in r4 made devices that
-replace omitted groups alternate between movement and zoom. Active groups and
-groups being explicitly zeroed are included together. This uses
-standard ONVIF without manufacturer-specific branches or SDKs. Simulated tests
-cover standard behavior and replacement of omitted groups. Simultaneous motion
-on the reported camera is still unresolved after the r5 hardware test. Its local
-trace shows all three requested velocities sent together and requests acknowledged,
-without an intervening Stop while the keys remain held. Successful presets
-demonstrate mechanical ability, but do not establish ContinuousMove behavior.
-See [ONVIF PTZ section 5.3.3](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v250a.pdf).
+Pan/tilt and zoom are sent together in ContinuousMove, using velocity spaces and
+signed ranges advertised by the camera. Revision 8 prefers the declared native
+movement timeout when it is within the advertised range. On the configured
+camera this is 60 seconds, instead of the one-second timeout imposed by previous
+revisions. An unchanged command is renewed after one third of its duration,
+measured from transmission time. Changed input is sent immediately, independently
+of this renewal schedule. Missing valid defaults fall back to a supported short
+duration, or the implicit device default if capabilities cannot be read.
 
-Revision 6 reads the advertised continuous velocity spaces and ranges, selects
-the profile's supported defaults (or an advertised alternative), and includes
-their URIs explicitly in each move. Signed speeds are scaled into those ranges.
-Missing or invalid capability metadata preserves the previous normalized requests.
-The local trace also inspects the serialized SOAP velocity fields without storing
-the authentication header or camera addresses. The real ONVIF/Zeep serialization
-has been checked offline. The r6 hardware test briefly combines movement and zoom,
-but zoom stops before either end of its range while the requested axes remain held.
-There is no confirmed physical fix yet. A read-only GetStatus probe could not
-obtain usable position feedback or verify the camera's internal timer.
-The user also confirms optical zoom plus lateral movement in TinyCam configured
-for ONVIF Profile S: the zoom is visible in Camera Viewer as well. The exact
-TinyCam commands are not captured. Both camera media profiles advertise a default
-movement timeout of 60 seconds; this application explicitly requests one second.
+Complete release, loss of focus, shutdown and stale keyboard input still request
+an explicit Stop immediately; they do not wait for the movement timeout. If the
+network prevents Stop from reaching the camera, its last accepted movement may
+continue until that timeout (60 seconds on the reported device).
 
-Revision 7 schedules renewal from request transmission, instead of response
-arrival. A simulated 0.8-second response previously left a gap in a one-second
-camera timeout; renewal now occurs immediately when overdue and uses current input.
-The existing short timeout remains unchanged. This fixes the measured scheduling
-defect, but the faster replies in the r6 trace do not establish it as the cause of
-the zoom interruption. Physical validation is still required.
+The user confirms that r8 keeps zoom running during a diagonal hold and correctly
+stops released directions. The transition pause remains. With r6/r7, zoom stopped after about one second
+in either direction before its physical limit. TinyCam configured for ONVIF
+Profile S can combine lateral movement and optical zoom on the same camera,
+confirmed in Camera Viewer's image. Its exact requests are unknown. The native
+timeout in r8 removes the one-second expiry implicated by the successful user test.
+GetStatus did not provide usable feedback, so internal firmware behavior is not measured.
 
-Closing Camera Viewer now closes all its video players, PTZ controllers and
-Camera Manager windows, including their children. Each child receives a graceful
-shutdown request; PTZ sends its stop requests before exiting. Shutdown keeps Tk
-responsive and forcibly ends an unresponsive owned child after 10 seconds.
-Auxiliary windows launched independently remain independent.
+Closing Camera Viewer closes its players, PTZ controllers and Camera Manager
+windows, including their children. PTZ requests its stops before exiting. Tk
+remains responsive; an unresponsive owned child is terminated after 10 seconds.
+Windows launched independently remain independent.
 
-A bounded local `ptz_control_<process-id>.log` records requested axes, outgoing
-PTZ commands and whether requests succeeded. It contains no camera addresses,
-credentials, profile tokens or SOAP payloads. No diagnostic text is added to the
-control window. These logs stay outside the version snapshot and GitHub.
+The local bounded `ptz_control_<process-id>.log` records requested axes, serialized
+velocity fields, request duration and results, without camera addresses,
+credentials, profile tokens or SOAP payloads. No diagnostic text or gamepad
+support is added to the interface.
 
-Revision 3 processes ONVIF requests in one background worker so the keyboard
-remains responsive during network calls. Only the latest complete input state is
-kept. After each camera response, the worker reads that state again before the
-next command, including between Stop and resume. Rapid direction changes cannot
-build a queue of old movements. If input updates stop for 0.5 seconds, the worker
-requests an explicit stop.
+114 automated tests pass, including simulated cameras that ignore zero velocity,
+latest-state handling during slow replies, native-timeout holds and prompt stops.
+Real ONVIF/Zeep serialization is checked offline. Hardware results above apply to
+the tested camera; other devices still need validation.
+See [ONVIF PTZ](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v250a.pdf).
 
-Continuous movement uses a short renewable duration within the camera's advertised
-timeout range. When capabilities cannot be read, the camera's declared default
-duration is used if available; otherwise its implicit default remains in effect.
-Renewals always use current input. Network operation timeouts and retry delays
-also keep errors from blocking the keyboard.
+Close old PTZ windows, launch `python camera_viewer.py` from the root and open a
+controller marked `v0.2.6 r8`. Hold a diagonal with Shift/Ctrl for at least five
+seconds, then release each key individually. Restart all Viewer/Manager windows
+if you have not loaded the parent/child lifetime changes yet.
 
-Close existing Viewer and auxiliary windows, then restart `python camera_viewer.py`
-from the root to load the parent/child changes. The PTZ title must contain
-`v0.2.6 r7`. This version is available for review in
-[PR #3](https://github.com/THET1TAN/camera-management-system/pull/3).
-
-The current source files are at the repository root, with an identical source
-snapshot in [`~v0.2.6/`](https://github.com/THET1TAN/camera-management-system/tree/fix/ptz-keyboard-v0.2.6/~v0.2.6). See the
-[release notes and camera verification steps](./note_de_version-v0.2.6.txt).
-Camera databases, logs and generated executables are not part of the snapshot.
+The root and `~v0.2.6/` contain identical source files, available in
+[PR #3](https://github.com/THET1TAN/camera-management-system/pull/3), kept as a draft.
+Main is unchanged. No executable has been rebuilt. Camera databases, local keys,
+logs and generated executables are excluded from the source snapshot.
+See [release notes](./note_de_version-v0.2.6.txt).
 
 ## ✨ Features
 
