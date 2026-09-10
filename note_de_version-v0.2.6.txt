@@ -1,0 +1,70 @@
+# Notes de version - Camera v0.2.6
+
+Date : 2026-09-10
+
+## Objectif
+
+Corriger le contrôle PTZ au clavier lorsque plusieurs touches sont maintenues.
+Exemple attendu : maintenir Bas + Droite, puis relâcher Bas, conserve seulement
+le mouvement vers la droite, sans devoir relâcher et appuyer de nouveau sur Droite.
+
+## Corrections
+
+- Chaque touche physique est suivie séparément. Le mouvement est recalculé pour
+  chaque axe après les appuis et les relâchements, avec zéro sur les axes inactifs.
+- Sous Windows, vérification des touches maintenues toutes les 30 ms afin de
+  récupérer un événement KeyRelease manqué. Seules les touches activées dans la
+  fenêtre PTZ sont suivies. Le délai effectif dépend aussi des appels ONVIF.
+- Les répétitions automatiques et les anciens événements déjà relâchés ne
+  réactivent plus une direction ni ne changent la priorité des touches opposées.
+- Les touches équivalentes (S et Bas, par exemple), les deux Shift et les deux
+  Ctrl restent indépendantes. Relâcher l'une conserve l'autre si elle est tenue.
+- Le relâchement de toutes les touches PTZ envoie maintenant un Stop explicite.
+- La perte du focus de la fenêtre, Échap et sa fermeture effacent les touches
+  mémorisées et demandent l'arrêt du PTZ et de la mise au point.
+- L'état d'une commande ONVIF n'est confirmé qu'après une réponse réussie.
+  En cas d'erreur, les mises à jour suivantes peuvent retenter la commande ou
+  son arrêt, au lieu de considérer la caméra déjà arrêtée.
+- L'aide indique correctement Shift pour zoomer et Ctrl pour dézoomer.
+- La fenêtre PTZ affiche la version v0.2.6.
+
+## Organisation
+
+- Sources actuelles disponibles à la racine et copiées à l'identique dans
+  ~v0.2.6, avec les ressources, les tests et les scripts d'installation actifs.
+- Les dossiers des anciennes versions restent inchangés.
+- Les bases de caméras, journaux, sauvegardes et exécutables générés sont exclus
+  du nouveau dossier de sources et de la publication GitHub.
+- La base camera_credentials.db existante à la racine reste utilisable.
+- Aucun exécutable n'a été recompilé : lancer python camera_viewer.py à la racine
+  pour utiliser le nouveau contrôleur.
+
+## Validation effectuée
+
+- 27 tests automatisés réussis sous Python 3.14, avec services ONVIF simulés.
+- Diagonales dans toutes les directions et dans les deux ordres de relâchement,
+  combinaisons avec zoom/focus, répétitions, touches équivalentes et opposées,
+  relâchement manqué, perte de focus, fermeture et erreurs réseau simulées.
+- Démarrage et fermeture d'une vraie fenêtre Tk masquée, avec caméra simulée :
+  liaisons clavier, lecteur d'état Win32 et titre de version vérifiés.
+- Syntaxe des sources Python et des tests vérifiée pour Python 3.9.
+- Aucun essai sur caméra physique effectué dans cette session.
+
+Commande de test : python -m unittest discover -s tests -v
+
+## Vérification sur caméra
+
+1. Lancer camera_viewer.py depuis la racine et ouvrir le contrôle PTZ.
+2. Maintenir Bas + Droite, relâcher Bas : seule la droite doit continuer.
+3. Refaire l'essai en relâchant Droite : seule la descente doit continuer.
+4. Essayer les autres diagonales, puis ajouter Shift ou Ctrl et relâcher une
+   direction : les commandes encore maintenues doivent rester actives.
+5. Relâcher toutes les touches : les mouvements doivent s'arrêter.
+6. Pendant un mouvement, changer de fenêtre, puis essayer Échap et la croix
+   de fermeture : la caméra doit s'arrêter à chaque fois.
+
+Références techniques :
+- ONVIF PTZ, vitesse nulle par axe :
+  https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec-v1612.pdf
+- Windows, lecture de l'état physique des touches :
+  https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate
