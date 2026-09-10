@@ -50,16 +50,16 @@ class VelocitySpaces:
         value = max(-1.0, min(1.0, value))
         return value * limits[1] if value >= 0 else -value * limits[0]
 
-    def build(self, motion):
+    def build(self, motion, stop_pan_tilt=False, stop_zoom=False):
         pan, tilt, zoom = motion
         velocity = {}
-        if pan or tilt:
+        if pan or tilt or stop_pan_tilt:
             vector = {'x': pan, 'y': tilt}
             if self.pan_tilt:
                 uri, x, y = self.pan_tilt
                 vector = {'x': self._scale(pan, x), 'y': self._scale(tilt, y), 'space': uri}
             velocity['PanTilt'] = vector
-        if zoom:
+        if zoom or stop_zoom:
             vector = {'x': zoom}
             if self.zoom:
                 uri, limits = self.zoom

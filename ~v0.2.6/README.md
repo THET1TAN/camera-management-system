@@ -2,7 +2,7 @@
 
 A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
 
-## Test version: v0.2.6 r6
+## Test version: v0.2.6 r7
 
 Keyboard PTZ control now tracks each held key independently. For example, hold
 Down + Right, then release Down: the camera receives a horizontal-only command
@@ -11,15 +11,18 @@ missed release events. Releasing all PTZ keys sends an explicit ONVIF stop;
 leaving the control window or closing it clears all held controls and requests
 both PTZ and focus stops.
 
-When an axis is released or reversed, the controller explicitly stops its ONVIF
-group before resuming the remaining directions. This also handles devices that
-keep an old velocity when sent a zero component. Pan and tilt share one stop
-group, so that transition can cause a brief pause; zoom is stopped separately.
+Releasing or reversing an axis now updates the complete velocity directly.
+Released axes are explicitly zeroed in that request while held axes keep moving.
+This removes the intermediate Pan/Tilt Stop that paused the remaining direction
+for approximately 220–270 ms in the reported r6 session. A full Stop still handles
+complete release, loss of focus, shutdown, preset cancellation and uncertain state
+after an error. For devices that ignore zero velocity, the previous stop/resume
+behavior remains available with `CAMERA_PTZ_CONSERVATIVE_STOPS=1` before launch.
 
 Pan/tilt and zoom are transmitted together in one ONVIF ContinuousMove request,
 including every renewal. The separate requests used in r4 made devices that
-replace omitted groups alternate between movement and zoom. Only active groups
-are included; releases still use explicit targeted Stop requests. This uses
+replace omitted groups alternate between movement and zoom. Active groups and
+groups being explicitly zeroed are included together. This uses
 standard ONVIF without manufacturer-specific branches or SDKs. Simulated tests
 cover standard behavior and replacement of omitted groups. Simultaneous motion
 on the reported camera is still unresolved after the r5 hardware test. Its local
@@ -34,7 +37,21 @@ their URIs explicitly in each move. Signed speeds are scaled into those ranges.
 Missing or invalid capability metadata preserves the previous normalized requests.
 The local trace also inspects the serialized SOAP velocity fields without storing
 the authentication header or camera addresses. The real ONVIF/Zeep serialization
-has been checked offline; the r6 response on the physical camera remains to be tested.
+has been checked offline. The r6 hardware test briefly combines movement and zoom,
+but zoom stops before either end of its range while the requested axes remain held.
+There is no confirmed physical fix yet. A read-only GetStatus probe could not
+obtain usable position feedback or verify the camera's internal timer.
+The user also confirms optical zoom plus lateral movement in TinyCam configured
+for ONVIF Profile S: the zoom is visible in Camera Viewer as well. The exact
+TinyCam commands are not captured. Both camera media profiles advertise a default
+movement timeout of 60 seconds; this application explicitly requests one second.
+
+Revision 7 schedules renewal from request transmission, instead of response
+arrival. A simulated 0.8-second response previously left a gap in a one-second
+camera timeout; renewal now occurs immediately when overdue and uses current input.
+The existing short timeout remains unchanged. This fixes the measured scheduling
+defect, but the faster replies in the r6 trace do not establish it as the cause of
+the zoom interruption. Physical validation is still required.
 
 Closing Camera Viewer now closes all its video players, PTZ controllers and
 Camera Manager windows, including their children. Each child receives a graceful
@@ -62,7 +79,7 @@ also keep errors from blocking the keyboard.
 
 Close existing Viewer and auxiliary windows, then restart `python camera_viewer.py`
 from the root to load the parent/child changes. The PTZ title must contain
-`v0.2.6 r6`. This version is available for review in
+`v0.2.6 r7`. This version is available for review in
 [PR #3](https://github.com/THET1TAN/camera-management-system/pull/3).
 
 The current source files are at the repository root, with an identical source

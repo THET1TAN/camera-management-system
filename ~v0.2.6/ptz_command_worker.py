@@ -52,7 +52,8 @@ class PTZCommandWorker:
     CLOSE_SECONDS = 6.0
 
     def __init__(self, ptz, imaging, profile_token, source_token,
-                 move_timeout=None, clock=time.monotonic, diagnostics=None, velocity_spaces=None):
+                 move_timeout=None, clock=time.monotonic, diagnostics=None, velocity_spaces=None,
+                 conservative_stops=False):
         self.ptz = ptz
         self.imaging = imaging
         self.profile_token = profile_token
@@ -61,6 +62,7 @@ class PTZCommandWorker:
         self.clock = clock
         self.diagnostics = diagnostics
         self.velocity_spaces = velocity_spaces or VelocitySpaces()
+        self.conservative_stops = conservative_stops
         self._last_observed = None
         self._condition = threading.Condition()
         self._desired = ControlState()
@@ -163,21 +165,26 @@ class PTZCommandWorker:
                                             else 'pan/tilt' if pan_tilt else 'zoom'))
 
     def _move(self, motion):
-        pan_tilt = motion[:2] != (0, 0)
-        zoom = motion[2] != 0
+        # In a direct transition, explicitly zero each previously moving group.
+        # Omission leaves that group running on a conforming ONVIF device.
+        pan_tilt = motion[:2] != (0, 0) or self.motion[:2] != (0, 0)
+        zoom = motion[2] != 0 or self.motion[2] != 0
+        sent_at = self.clock()
         try:
             request = self.ptz.create_type('ContinuousMove')
             request.ProfileToken = self.profile_token
             # Always transmit all HELD controls together, including renewals.
             # Separate PT/Zoom requests make devices that replace their current
             # movement on every request alternate between the two actions.
-            request.Velocity = self.velocity_spaces.build(motion)
+            request.Velocity = self.velocity_spaces.build(
+                motion, stop_pan_tilt=pan_tilt, stop_zoom=zoom)
             if self.move_timeout is not None:
                 request.Timeout = timedelta(seconds=self.move_timeout)
             pt_vector = request.Velocity.get('PanTilt', {})
             zoom_vector = request.Velocity.get('Zoom', {})
             self._trace('move_send', pan=pt_vector.get('x', 0), tilt=pt_vector.get('y', 0),
-                        zoom=zoom_vector.get('x', 0))
+                        zoom=zoom_vector.get('x', 0), timeout=self.move_timeout)
+            sent_at = self.clock()
             self.ptz.ContinuousMove(request)
         except Exception as error:
             self.motion = (None if pan_tilt else self.motion[0],
@@ -186,9 +193,12 @@ class PTZCommandWorker:
             self._ptz_failed('ContinuousMove', error)
             return
         self.motion = motion
-        self._trace('move_accepted', pan=motion[0], tilt=motion[1], zoom=motion[2])
+        self._trace('move_accepted', pan=motion[0], tilt=motion[1], zoom=motion[2],
+                    response_seconds=round(self.clock() - sent_at, 4))
         # Renewal is never a queued copy; the next step reads the latest state.
-        self._renew_at = self.clock() + (self.move_timeout / 3 if self.move_timeout else 0.25)
+        # The device's timer starts when it receives the request, not when its
+        # response arrives. Slow replies must not postpone the next renewal.
+        self._renew_at = sent_at + (self.move_timeout / 3 if self.move_timeout else 0.25)
         self._report('PTZ request accepted: pan {:+.1f}, tilt {:+.1f}, zoom {:+.1f}'.format(*motion))
 
     def _ptz_failed(self, operation, error):
@@ -249,9 +259,14 @@ class PTZCommandWorker:
                 self._stop_ptz(True, True)
                 return True
             return False
-        stop_pt = any(self._needs_stop(old, new)
+        # Normal ONVIF transitions replace the velocity, including zero axes,
+        # without stopping the still-held directions. Unknown state after an
+        # error always needs Stop. Keep the previous stop/resume strategy as an
+        # explicit compatibility option for devices that ignore zero velocity.
+        stop_pt = any(old is None or (self.conservative_stops and self._needs_stop(old, new))
                       for old, new in zip(self.motion[:2], desired.motion[:2]))
-        stop_zoom = self._needs_stop(self.motion[2], desired.zoom)
+        stop_zoom = self.motion[2] is None or (self.conservative_stops and
+                                              self._needs_stop(self.motion[2], desired.zoom))
         if stop_pt or stop_zoom:
             self._stop_ptz(stop_pt, stop_zoom)
             return True
@@ -270,6 +285,13 @@ class PTZCommandWorker:
                         focus=desired.focus, preset=desired.preset is not None, halt=halt)
         # A released focus must not wait behind a stream of PTZ changes.
         if (desired.focus == 0 or self._focus_halt_done != halt) and self._focus_step(desired, halt):
+            return True
+        # A late PTZ response can make every renewal immediately due. Allow a
+        # changed focus speed between identical renewals, without delaying a
+        # new PTZ direction, release, halt or preset transition.
+        if (desired.motion == self.motion and self._ptz_halt_done == halt
+                and desired.preset is None and not self._preset_active
+                and self._focus_step(desired, halt)):
             return True
         if self._ptz_step(desired, halt):
             return True

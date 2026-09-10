@@ -66,6 +66,17 @@ class VelocityTests(unittest.TestCase):
                                   ('another-private-uri', (-1, 1)))
         self.assertNotIn('private', str(selected.summary()))
 
+    def test_zeroed_groups_keep_their_advertised_space(self):
+        selected = VelocitySpaces(('pt', (-2, 4), (-6, 8)), ('zoom', (-0.2, 0.6)))
+        self.assertEqual(selected.build((0, 0, 0.5), stop_pan_tilt=True), {
+            'PanTilt': {'x': 0, 'y': 0, 'space': 'pt'}, 'Zoom': {'x': 0.3, 'space': 'zoom'}})
+        self.assertEqual(selected.build((0.5, 0, 0), stop_zoom=True), {
+            'PanTilt': {'x': 2, 'y': 0, 'space': 'pt'}, 'Zoom': {'x': 0, 'space': 'zoom'}})
+
+    def test_idle_unsupported_groups_are_still_omitted(self):
+        self.assertEqual(VelocitySpaces().build((0.5, 0, 0)), {'PanTilt': {'x': 0.5, 'y': 0}})
+        self.assertEqual(VelocitySpaces().build((0, 0, 0.5)), {'Zoom': {'x': 0.5}})
+
     def test_worker_sends_scaled_groups_in_one_request(self):
         service = Mock()
         service.create_type.side_effect = lambda name: NS()

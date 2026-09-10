@@ -1,8 +1,36 @@
-# Notes de version - Camera v0.2.6 r6 (en validation)
+# Notes de version - Camera v0.2.6 r7 (en validation)
 
 Date : 2026-09-10
 
-## Révision 6
+## Révision 7
+
+- Relâcher une direction ou l'inverser remplace directement la vitesse complète,
+  avec zéro explicite pour les axes relâchés. L'axe encore maintenu ne reçoit plus
+  d'arrêt intermédiaire. Dans l'essai r6, Stop prenait environ 220 à 270 ms.
+- L'arrêt complet, la perte de focus, la fermeture, l'annulation d'un preset et
+  les états incertains après erreur conservent les commandes Stop explicites.
+- Pour les appareils qui ignorent une vitesse nulle, l'ancien arrêt/reprise reste
+  disponible via CAMERA_PTZ_CONSERVATIVE_STOPS=1 avant le lancement. Ce choix
+  concerne le comportement de l'appareil, sans condition sur sa marque.
+- Le renouvellement est calculé depuis l'envoi, et non la réception de la réponse.
+  Une réponse lente ne décale plus artificiellement l'échéance; une demande
+  dépassée est remplacée par les touches réellement maintenues à cet instant.
+  Les renouvellements ne privent pas la mise au point d'un créneau d'envoi.
+- Le délai de mouvement négocié reste inchangé (1 seconde sur la caméra testée).
+  Le journal ajoute le délai demandé et la durée de réponse, sans données privées.
+- L'essai matériel r6 confirme un bref cumul, puis l'arrêt du zoom avant les butées
+  dans les deux sens. Le XML contient toujours les trois vitesses pendant le maintien.
+  La lecture GetStatus n'a pas fourni de position exploitable.
+  La correction du renouvellement est démontrée avec un réseau lent simulé;
+  les réponses plus rapides du journal r6 ne prouvent pas que ce défaut explique
+  la coupure du zoom. La r7 reste à valider sur la caméra.
+- Comparaison fournie par l'utilisateur : TinyCam en ONVIF Profile S combine
+  déplacement latéral et zoom optique (visible également dans Camera Viewer).
+  Les requêtes exactes de TinyCam n'ont pas été capturées. Les deux profils
+  de la caméra annoncent un délai par défaut de 60 secondes; notre contrôleur
+  demande explicitement 1 seconde. Ce constat est une piste, pas une cause prouvée.
+
+## Révision 6 (capacités conservées)
 
 - Les espaces et plages de vitesse de GetConfigurationOptions sont désormais
   utilisés, avec sélection du défaut annoncé par le profil lorsqu'il est valide.
@@ -30,8 +58,8 @@ Bas conserve la droite. Les événements Tk et la vérification Win32 toutes les
 
 Un seul thread envoie les requêtes ONVIF et relit la demande actuelle après
 chaque réponse. Les anciens mouvements ne sont pas rejoués. Les relâchements
-et inversions utilisent des arrêts ciblés Pan/Tilt et Zoom avant une éventuelle
-reprise des commandes encore maintenues.
+et inversions mettent à jour les vitesses directement en r7; l'arrêt/reprise
+des versions précédentes reste un choix de compatibilité explicite.
 
 En r5, le déplacement et le zoom sont envoyés ensemble dans une seule requête
 ContinuousMove, y compris les renouvellements. Les groupes inactifs sont omis.
@@ -55,8 +83,8 @@ implicite si nécessaire. Les capacités effectives restent déterminantes.
 Une absence de publications du clavier pendant 0,5 seconde déclenche un arrêt.
 Les opérations réseau ont un délai configuré de 1 seconde et les erreurs sont
 retentées après 0,2 seconde. Perte de focus, Échap et fermeture effacent les touches
-et annulent les presets en attente. Une brève pause reste possible lors d'un
-arrêt/reprise Pan/Tilt, car ONVIF regroupe ces deux axes.
+et annulent les presets en attente. Le mode de compatibilité avec arrêt/reprise
+Pan/Tilt peut toujours provoquer une pause, car ONVIF regroupe ces deux axes.
 
 ## Dépendance des fenêtres
 
@@ -98,7 +126,7 @@ base, dans ce fichier local ou CAMERA_ENCRYPTION_KEY. Une installation neuve,
 sans base, génère sa propre clé. Une base existante sans clé provoque un message
 de récupération; aucune clé de remplacement n'est générée silencieusement.
 
-- Version 0.2.6, révision de test r6 affichée dans le titre PTZ.
+- Version 0.2.6, révision de test r7 affichée dans le titre PTZ.
 - Sources actives identiques à la racine et dans ~v0.2.6, y compris les nouveaux
   modules child_processes.py et ptz_diagnostics.py et les tests de fermeture.
 - Anciennes versions conservées. Bases de caméras, journaux, sauvegardes et
@@ -108,7 +136,11 @@ de récupération; aucune clé de remplacement n'est générée silencieusement.
 
 ## Validation
 
-- 94 tests automatisés réussis sous Python 3.14 avec services caméra simulés.
+- 110 tests automatisés réussis sous Python 3.14 avec services caméra simulés.
+- Transitions directes dans toutes les diagonales, zoom dans les deux sens,
+  zéros explicites, inversions sans arrêt intermédiaire et erreurs couvertes.
+- Maintien simulé de plus de 6 secondes avec des réponses retardées de 0,8 seconde :
+  aucune expiration entre les renouvellements. Ce scénario échoue avec la r6.
 - Clé locale comparée octet par octet avec la valeur précédente. Lecture des
   clés existantes, configuration par environnement, partage avec le snapshot,
   création pour une installation neuve et protection des bases sans clé vérifiés.
@@ -137,7 +169,7 @@ de récupération; aucune clé de remplacement n'est générée silencieusement.
   la fermeture et fonctionnement autonome couverts.
 - Trace vérifiée : coordonnées présentes, détails de connexion absents;
   une erreur du journal ne peut pas empêcher Stop.
-- Démarrage/fermeture Tk, titre r6 et syntaxe Python 3.9 vérifiés.
+- Démarrage/fermeture Tk, titre r7 et syntaxe Python 3.9 vérifiés.
 
 Commande : python -m unittest discover -s tests -v
 
@@ -145,11 +177,13 @@ Commande : python -m unittest discover -s tests -v
 
 1. Fermer manuellement les anciennes fenêtres PTZ/vidéo/Manager et Camera Viewer.
    Leurs processus déjà lancés ne peuvent pas recevoir la mise à jour de dépendance.
-2. Relancer camera_viewer.py à la racine, ouvrir un PTZ et vérifier v0.2.6 r6.
+2. Relancer camera_viewer.py à la racine, ouvrir un PTZ et vérifier v0.2.6 r7.
 3. Maintenir W + D, ajouter Shift et le garder enfoncé. Refaire avec Ctrl,
-   puis en commençant par le zoom avant d'ajouter les directions.
+   puis en commençant par le zoom avant d'ajouter les directions. Maintenir les
+   trois touches au moins 5 secondes avant une butée pour vérifier la durée du cumul.
 4. Relâcher tour à tour chaque touche, essayer les autres diagonales, puis
-   des changements rapides. Les directions relâchées doivent s'arrêter.
+   des changements rapides. Les directions relâchées doivent s'arrêter; l'axe
+   maintenu doit continuer sans l'ancien arrêt intermédiaire.
 5. Ouvrir plusieurs lecteurs et PTZ, puis Camera Manager et un PTZ depuis
    celui-ci. Fermer Camera Viewer : toute cette famille doit se fermer et
    les mouvements doivent s'arrêter.

@@ -69,7 +69,8 @@ class WorkerTests(unittest.TestCase):
         self.camera = Camera()
         self.clock = FakeClock()
         self.worker = PTZCommandWorker(self.camera.ptz, self.camera.imaging,
-                                        'profile', 'source', move_timeout=1, clock=self.clock)
+                                        'profile', 'source', move_timeout=1, clock=self.clock,
+                                        conservative_stops=True)
 
     def drain(self):
         for _ in range(20):
@@ -395,10 +396,180 @@ class WorkerTests(unittest.TestCase):
         self.camera.ptz.ContinuousMove.assert_called_once()
 
 
+class SmoothWorkerTests(unittest.TestCase):
+    def setUp(self):
+        self.camera = Camera()
+        self.camera.retains_zero = False
+        self.clock = FakeClock()
+        self.worker = PTZCommandWorker(self.camera.ptz, self.camera.imaging,
+                                       'profile', 'source', move_timeout=1, clock=self.clock)
+
+    def send(self, **values):
+        self.worker.submit(ControlState(**values))
+        for _ in range(20):
+            if not self.worker.step():
+                return
+        self.fail('Command loop failed to settle')
+
+    def test_diagonal_release_preserves_remaining_axis_without_stop(self):
+        for pan in (-0.5, 0.5):
+            for tilt in (-0.5, 0.5):
+                for zoom in (-0.5, 0, 0.5):
+                    for remaining in ({'pan': pan}, {'tilt': tilt}):
+                        with self.subTest(pan=pan, tilt=tilt, zoom=zoom, remaining=remaining):
+                            self.send(pan=pan, tilt=tilt, zoom=zoom)
+                            before = len(self.camera.calls)
+                            self.send(**remaining, zoom=zoom)
+                            expected = (remaining.get('pan', 0), remaining.get('tilt', 0), zoom)
+                            self.assertEqual(tuple(self.camera.motion), expected)
+                            self.assertEqual(len(self.camera.calls[before:]), 1)
+                            self.assertEqual(self.camera.calls[-1][0], 'move')
+        self.camera.ptz.Stop.assert_not_called()
+
+    def test_released_zoom_is_explicitly_zeroed_in_same_movement_request(self):
+        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
+        self.send(pan=0.5, tilt=-0.5)
+        self.assertEqual(self.camera.calls[-1], ('move', (0.5, -0.5, 0)))
+        self.assertEqual(self.camera.motion, [0.5, -0.5, 0])
+        self.camera.ptz.Stop.assert_not_called()
+
+    def test_released_pan_tilt_is_zeroed_while_zoom_continues(self):
+        self.send(pan=0.5, tilt=-0.5, zoom=-0.5)
+        self.send(zoom=-0.5)
+        self.assertEqual(self.camera.calls[-1], ('move', (0, 0, -0.5)))
+        self.assertEqual(self.camera.motion, [0, 0, -0.5])
+        self.camera.ptz.Stop.assert_not_called()
+
+    def test_all_axes_can_reverse_without_intermediate_stop(self):
+        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
+        self.send(pan=-0.5, tilt=0.5, zoom=-0.5)
+        self.assertEqual(self.camera.motion, [-0.5, 0.5, -0.5])
+        self.assertEqual(len(self.camera.calls), 2)
+        self.camera.ptz.Stop.assert_not_called()
+
+    def test_camera_replacing_omitted_groups_keeps_every_held_axis(self):
+        self.camera.replaces_omitted_groups = True
+        for state in [dict(pan=0.5, tilt=-0.5, zoom=0.5),
+                      dict(pan=0.5, zoom=0.5), dict(zoom=0.5),
+                      dict(tilt=-0.5, zoom=0.5), dict(tilt=-0.5)]:
+            self.send(**state)
+            self.assertEqual(self.camera.motion, [state.get(k, 0) for k in ('pan', 'tilt', 'zoom')])
+        self.camera.ptz.Stop.assert_not_called()
+
+    def test_rapid_changes_during_response_use_only_latest_complete_vector(self):
+        def move_then_change(request):
+            self.camera.move(request)
+            if len(self.camera.calls) == 1:
+                for _ in range(100):
+                    self.worker.submit(ControlState(pan=-0.5, tilt=0.5, zoom=-0.5))
+                    self.worker.submit(ControlState(pan=0.5, tilt=-0.5, zoom=0.5))
+                self.worker.submit(ControlState(pan=0.5))
+        self.camera.ptz.ContinuousMove.side_effect = move_then_change
+        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
+        self.assertEqual(self.camera.calls, [('move', (0.5, -0.5, 0.5)), ('move', (0.5, 0, 0))])
+        self.assertEqual(self.camera.motion, [0.5, 0, 0])
+
+    def test_full_release_during_response_sends_stop_without_old_resume(self):
+        def move_then_release(request):
+            self.camera.move(request)
+            self.worker.submit(ControlState())
+        self.camera.ptz.ContinuousMove.side_effect = move_then_release
+        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
+        self.assertEqual(self.camera.calls, [('move', (0.5, -0.5, 0.5)), ('stop', True, True)])
+        self.assertEqual(self.camera.motion, [0, 0, 0])
+
+    def test_explicit_zero_with_lost_reply_marks_all_sent_groups_unknown(self):
+        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
+        self.camera.ptz.ContinuousMove.side_effect = RuntimeError('lost response')
+        self.send(pan=0.5)
+        self.assertEqual(self.worker.motion, (None, None, None))
+        self.worker.submit(ControlState(tilt=0.5))
+        self.camera.ptz.ContinuousMove.side_effect = self.camera.move
+        self.clock.now += 0.21
+        self.send(tilt=0.5)
+        self.assertEqual(self.camera.calls[-2:], [('stop', True, True), ('move', (0, 0.5, None))])
+        self.assertEqual(self.camera.motion, [0, 0.5, 0])
+
+    def test_full_release_after_failed_transition_never_resumes(self):
+        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
+        self.camera.ptz.ContinuousMove.side_effect = RuntimeError('lost response')
+        self.send(pan=0.5)
+        self.clock.now += 0.21
+        self.send()
+        self.assertEqual(self.camera.calls[-1], ('stop', True, True))
+        self.assertEqual(self.camera.motion, [0, 0, 0])
+
+    def test_input_expiry_still_stops_all_axes(self):
+        self.send(pan=0.5, tilt=-0.5, zoom=0.5)
+        self.clock.now += 0.51
+        self.worker.step()
+        self.assertEqual(self.camera.calls[-1], ('stop', True, True))
+        self.assertEqual(self.camera.motion, [0, 0, 0])
+
+    def test_focus_loss_and_close_still_force_full_stop(self):
+        for action in (self.worker.halt, self.worker.close):
+            self.send(pan=0.5, tilt=0.5, zoom=-0.5)
+            action()
+            for _ in range(4):
+                self.worker.step()
+            self.assertEqual(self.camera.motion, [0, 0, 0])
+            self.assertEqual(self.camera.calls[-1], ('stop', True, True))
+
+    def test_slow_responses_do_not_leave_gap_in_camera_timeout(self):
+        state = ControlState(pan=0.5, tilt=-0.5, zoom=0.5)
+        deadline = None
+        expired = []
+
+        def move_with_delayed_reply(request):
+            nonlocal deadline
+            self.camera.move(request)
+            deadline = self.clock.now + request.Timeout.total_seconds()
+            self.clock.now += 0.8  # Device already accepted the move, reply arrives late.
+            self.worker.submit(state)  # Independent Tk heartbeat remains active.
+
+        self.camera.ptz.ContinuousMove.side_effect = move_with_delayed_reply
+        while self.clock.now < 6:
+            self.worker.submit(state)
+            if not self.worker.step():
+                self.clock.now += 0.02
+            if deadline is not None and self.clock.now >= deadline:
+                expired.append(self.clock.now)
+        self.assertFalse(expired, 'A response delay must not create a gap after the camera timeout')
+        self.assertEqual(self.camera.motion, [0.5, -0.5, 0.5])
+        self.send()
+        self.assertEqual(self.camera.motion, [0, 0, 0])
+
+    def test_new_input_replaces_overdue_renewal_after_slow_reply(self):
+        def delayed_reply_then_change(request):
+            self.camera.move(request)
+            self.clock.now += 0.8
+            self.worker.submit(ControlState(pan=0.5))
+        self.camera.ptz.ContinuousMove.side_effect = delayed_reply_then_change
+        self.worker.submit(ControlState(pan=0.5, tilt=-0.5, zoom=0.5))
+        self.worker.step()
+        self.worker.step()
+        self.assertEqual(self.camera.calls, [('move', (0.5, -0.5, 0.5)), ('move', (0.5, 0, 0))])
+
+    def test_due_renewals_do_not_starve_a_held_focus_key(self):
+        state = ControlState(pan=0.5, tilt=-0.5, zoom=0.5, focus=0.5)
+        def delayed_reply(request):
+            self.camera.move(request)
+            self.clock.now += 0.4
+            self.worker.submit(state)
+        self.camera.ptz.ContinuousMove.side_effect = delayed_reply
+        self.worker.submit(state)
+        self.worker.step()
+        self.worker.step()
+        self.assertEqual(self.camera.focus, 0.5)
+        self.assertEqual(self.camera.calls[-1], ('focus', 0.5))
+        self.assertEqual(self.camera.ptz.ContinuousMove.call_count, 1)
+
+
 class ThreadTests(unittest.TestCase):
     def test_input_remains_responsive_during_slow_stop_and_no_obsolete_resume(self):
         camera = Camera()
-        worker = PTZCommandWorker(camera.ptz, camera.imaging, 'profile', 'source', move_timeout=1)
+        worker = PTZCommandWorker(camera.ptz, camera.imaging, 'profile', 'source', move_timeout=1,
+                                  conservative_stops=True)
         started = threading.Event()
         stopping = threading.Event()
         unblock = threading.Event()

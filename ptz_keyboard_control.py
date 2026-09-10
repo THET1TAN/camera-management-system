@@ -10,7 +10,7 @@ from ptz_diagnostics import PTZDiagnostics, install_wire_trace
 from ptz_velocity import VelocitySpaces
 
 VERSION = "0.2.6"
-REVISION = 6
+REVISION = 7
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
 command_worker = None
@@ -236,6 +236,8 @@ def main(argv=None):
             options = None
         move_timeout = select_move_timeout(ptz_service, media_profile, options=options)
         velocity_spaces = VelocitySpaces.from_options(configuration, options)
+        conservative_stops = os.environ.get('CAMERA_PTZ_CONSERVATIVE_STOPS', '').strip().lower() in (
+            '1', 'true', 'yes', 'on')
     except Exception as e:
         print(f"Error connecting to camera: {e}")
         return 1
@@ -249,14 +251,15 @@ def main(argv=None):
     try:
         diagnostics = PTZDiagnostics(Path(__file__).with_name(f'ptz_control_{os.getpid()}.log'))
         diagnostics.record('session', version=VERSION, revision=REVISION,
-                           move_timeout=move_timeout)
+                           move_timeout=move_timeout, conservative_stops=conservative_stops)
         diagnostics.record('velocity_spaces', **velocity_spaces.summary())
         diagnostics.record('wire_trace', enabled=install_wire_trace(ptz_service, diagnostics))
     except OSError:
         pass
     command_worker = PTZCommandWorker(ptz_service, imaging_service, media_profile.token,
                                       video_source_token, move_timeout=move_timeout,
-                                      diagnostics=diagnostics, velocity_spaces=velocity_spaces)
+                                      diagnostics=diagnostics, velocity_spaces=velocity_spaces,
+                                      conservative_stops=conservative_stops)
     root = tk.Tk()
     controller = PTZController(root, camera_id, camera_ip)
 
