@@ -1,9 +1,17 @@
-# Camera Management System — r8 candidate retirée
+# Camera Management System — withdrawn r8 candidate
 
-**Brouillon, non validé : ne pas utiliser comme version recommandée.**
+**Draft, unvalidated: do not use as the recommended version.**
 
-La r8 est conservée sans correctif de code pour une éventuelle reprise. Les essais réels ont révélé un arrêt de l’axe encore maintenu après un relâchement partiel et un zoom saccadé pendant les déplacements. Voir [l’issue #7](https://github.com/THET1TAN/camera-management-system/issues/7) et [le bilan](../docs/ptz-r8-withdrawal.md).
+r8 is preserved without code fixes for possible future work. Field testing
+revealed that the still-held axis can stop after a partial release and that zoom
+can stutter during movement. See [issue #7](https://github.com/THET1TAN/camera-management-system/issues/7)
+and the [withdrawal report](../docs/ptz-r8-withdrawal.md).
 
-`main` contient la base publique précédente. La r9 évolue séparément dans la [PR #4](https://github.com/THET1TAN/camera-management-system/pull/4). Aucune réintégration de la r8 sans nouveaux essais et validation explicite.
+`main` contains the previous public baseline. r9 is being developed separately
+in [PR #4](https://github.com/THET1TAN/camera-management-system/pull/4).
+r8 must not be reintroduced without further testing and explicit validation.
 
-Installation de test : Python, les dépendances de `requirements.txt`, puis `python camera_viewer.py`. Conserver la base privée et sa clé ensemble. Ne jamais les publier. Le dossier `~v0.2.6` conserve les sources r8 avec le même statut non validé.
+Test setup: install Python and the dependencies in `requirements.txt`, then run
+`python camera_viewer.py`. Keep the private database and its key together; never
+publish either file. The `~v0.2.6` folder preserves the r8 sources with the same
+unvalidated status.
