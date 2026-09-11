@@ -2,7 +2,7 @@
 
 **Brouillon, non validé : ne pas utiliser comme version recommandée.**
 
-La r8 est conservée sans correctif de code pour une éventuelle reprise. Les essais réels ont révélé un arrêt de l’axe encore maintenu après un relâchement partiel et un zoom saccadé pendant les déplacements. Voir [l’issue #7](https://github.com/THET1TAN/camera-management-system/issues/7) et [le bilan](docs/ptz-r8-withdrawal.md).
+La r8 est conservée sans correctif de code pour une éventuelle reprise. Les essais réels ont révélé un arrêt de l’axe encore maintenu après un relâchement partiel et un zoom saccadé pendant les déplacements. Voir [l’issue #7](https://github.com/THET1TAN/camera-management-system/issues/7) et [le bilan](../docs/ptz-r8-withdrawal.md).
 
 `main` contient la base publique précédente. La r9 évolue séparément dans la [PR #4](https://github.com/THET1TAN/camera-management-system/pull/4). Aucune réintégration de la r8 sans nouveaux essais et validation explicite.
 
