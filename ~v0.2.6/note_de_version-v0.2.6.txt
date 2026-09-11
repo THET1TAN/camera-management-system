@@ -1,4 +1,11 @@
-# Notes de version - Camera v0.2.6 r8 (version courante)
+# R8 RETIREE — notes historiques, non validées
+
+Les résultats initiaux décrits ci-dessous ont été invalidés en usage réel le
+11 septembre 2026 : arrêt de l’axe maintenu et zoom saccadé. Voir l’issue #7.
+Main revient à la base précédente. La r8 est archivée dans la PR #8 sans correctif ;
+la r9 est travaillée séparément dans la PR #4. Ce document conserve l’historique.
+
+# Notes de version - Camera v0.2.6 r8 (historique retiré)
 
 Date : 2026-09-10
 
