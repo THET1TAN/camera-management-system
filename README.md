@@ -1,26 +1,26 @@
 # Camera Management System — r9 B candidate
 
-> **Nouvel essai C, non validé :** reprise anticipée pour tenter de réduire la
-> pause. Lancer `python camera_viewer_early_resume_test.py` et vérifier le titre
-> **r9 - Early resume test C**. Voir [les consignes et limites](docs/ptz-early-resume-test.md).
-> B reste disponible avec `python camera_viewer_direct_test.py`.
+> **New C experiment, not yet validated:** early resume to try to reduce the
+> pause. Run `python camera_viewer_early_resume_test.py` and check for the title
+> **r9 - Early resume test C**. See the [test instructions and limitations](docs/ptz-early-resume-test.md).
+> B remains available through `python camera_viewer_direct_test.py`.
 
-> **Branche de test, PR #4 en brouillon.** La r8 est retirée après régressions
-> terrain et conservée sans correctif dans la [PR #8](https://github.com/THET1TAN/camera-management-system/pull/8).
-> `main` revient à la base publique précédente. Voir [le bilan r8](docs/ptz-r8-withdrawal.md).
+> **Test branch, draft PR #4.** r8 was withdrawn after field regressions and is
+> preserved without code fixes in [PR #8](https://github.com/THET1TAN/camera-management-system/pull/8).
+> `main` has returned to the previous public baseline. See the [r8 withdrawal report](docs/ptz-r8-withdrawal.md).
 
-La r9 B essaie une vitesse entièrement nulle lors du relâchement d’un axe, puis
-réapplique tous les axes encore maintenus. Les variations d’amplitude de même
-signe restent directes et les commandes inchangées suivent le délai natif ONVIF.
+r9 B sends a fully zero velocity vector when an axis is released, then reapplies
+all axes that remain held. Same-sign speed changes remain direct, and unchanged
+commands follow the native ONVIF movement timeout.
 
-**Premier essai utilisateur, 11 septembre 2026 :** les relâchements fonctionnent
-et le déplacement avec zoom simultané est confirmé. Une pause au relâchement
-reste perceptible. C’est une candidate prometteuse, encore à éprouver en usage
-prolongé ; aucune validation universelle ni passage sur main n’est annoncé.
+**Initial user test, September 11, 2026:** key releases work correctly and
+simultaneous movement and zoom are confirmed. A pause remains when an axis is
+released. This is a promising candidate that still needs extended field testing;
+no universal compatibility or promotion to main is claimed.
 
-Voir [les recherches, le fonctionnement et le protocole de test](docs/ptz-release-investigation.md).
-Le dossier `~v0.2.6` conserve la r8 historique retirée ; les fichiers actifs de
-cette branche contiennent l’expérience r9 B.
+See the [research, implementation details and test procedure](docs/ptz-release-investigation.md).
+The `~v0.2.6` folder preserves the withdrawn historical r8 sources; this branch's
+active files contain the r9 B experiment.
 
 ## Installation
 

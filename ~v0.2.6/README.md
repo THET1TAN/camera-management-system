@@ -1,5 +1,11 @@
-# r8 retirée — archive historique
+# Withdrawn r8 — historical archive
 
-Cette archive conserve le code r8 sans correctif. Elle n’est plus recommandée : arrêt de l’axe maintenu et zoom saccadé constatés en conditions réelles. Voir [le bilan](../docs/ptz-r8-withdrawal.md), [l’issue #7](https://github.com/THET1TAN/camera-management-system/issues/7) et la [PR candidate #8](https://github.com/THET1TAN/camera-management-system/pull/8).
+This archive preserves r8 code without fixes. It is no longer recommended:
+field testing revealed that a still-held axis can stop and that zoom can stutter.
+See the [withdrawal report](../docs/ptz-r8-withdrawal.md),
+[issue #7](https://github.com/THET1TAN/camera-management-system/issues/7),
+and [candidate PR #8](https://github.com/THET1TAN/camera-management-system/pull/8).
 
-La r9 B se trouve dans les fichiers actifs de la PR #4. Main utilise la base publique précédant la r8. Les notes de cette archive décrivent des résultats historiques invalidés par les essais ultérieurs.
+r9 B is in the active files of PR #4. Main uses the public baseline preceding r8.
+The release notes in this archive describe historical results invalidated by
+subsequent field testing.
