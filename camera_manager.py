@@ -7,10 +7,10 @@ import threading
 import subprocess
 import sys
 import shutil
-from child_processes import ChildProcesses, parent_lifetime
+
+# Encryption key (should be kept secret)
 from camera_key import load_encryption_key
 
-# Keep the installation key outside the published source files.
 ENCRYPTION_KEY = load_encryption_key(os.path.dirname(__file__))
  
 
@@ -174,8 +174,7 @@ def migrate_existing_data():
 class CameraApp:
     def __init__(self, root):
         self.root = root
-        self.children = ChildProcesses(root)
-        parent_lifetime.bind(root, self.on_closing)
+        self.processes = []  # Liste pour stocker les sous-processus
         
         # Configuration du conteneur principal
         self.root.grid_rowconfigure(0, weight=1)
@@ -396,12 +395,13 @@ class CameraApp:
             return
         
         decrypted_password = cipher.decrypt(camera[3]).decode()
-        self.children.spawn([python_exe,
+        process = subprocess.Popen([python_exe, 
                                   os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py'),
                                   str(camera[0]),  # ID de la caméra en premier argument
                                   camera[1],       # Adresse IP
                                   camera[2],       # Username
                                   decrypted_password])
+        self.processes.append(process)
 
     def play_ptz_thread(self, camera):
         python_exe = get_python39()
@@ -409,12 +409,23 @@ class CameraApp:
             messagebox.showerror("Error", "Python 3.9 is required for PTZ")
             return
         decrypted_password = cipher.decrypt(camera[3]).decode()
-        self.children.spawn([python_exe,
+        subprocess.Popen([python_exe,
                           os.path.join(os.path.dirname(__file__), 'ptz_keyboard_control.py'),
                           str(camera[0]), camera[1], camera[2], decrypted_password])
 
     def on_closing(self):
-        self.children.close()
+        # Terminer tous les sous-processus
+        for process in self.processes:
+            try:
+                process.terminate()  # Envoyer un signal de terminaison
+                process.wait(timeout=1)  # Attendre la fin du processus
+            except subprocess.TimeoutExpired:
+                process.kill()  # Forcer la fermeture si le processus ne répond pas
+            except Exception as e:
+                print(f"Erreur lors de la fermeture du processus : {e}")
+
+        # Fermer la fenêtre principale
+        self.root.destroy()
 
     def focus_previous(self, event):
         event.widget.tk_focusPrev().focus_set()

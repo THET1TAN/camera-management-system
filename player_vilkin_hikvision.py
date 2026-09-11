@@ -12,7 +12,6 @@ import tkinter.ttk as ttk
 from PIL import Image, ImageTk
 from onvif import ONVIFCamera
 import argparse
-from child_processes import parent_lifetime
 from collections import deque
 import io
 import re
@@ -904,7 +903,6 @@ def main():
     args = parser.parse_args()
 
     player = VideoPlayer(args.camera_id, args.camera_ip, args.username, args.password)
-    parent_lifetime.bind(player.root, player.on_closing)
     player.run()
 
 if __name__ == "__main__":
