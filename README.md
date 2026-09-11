@@ -1,6 +1,6 @@
 # 📹 Camera Management System
 
-> **PTZ r8 withdrawn / retirée (2026-09-11).** Les essais réels ont révélé des arrêts du déplacement encore maintenu et des saccades du zoom. `main` revient à la base publique précédant la r8 (`d0336f3`). Les limites clavier historiques restent présentes. La r8 et la r9 sont des candidates non validées. Voir [le bilan](docs/ptz-r8-withdrawal.md) et [l’issue #7](https://github.com/THET1TAN/camera-management-system/issues/7).
+> **PTZ r8 withdrawn (2026-09-11).** Field testing revealed that movement can stop while a direction key is still held, and that zoom can stutter during movement. `main` has returned to the public baseline preceding r8 (`d0336f3`). Its historical keyboard limitations remain. Both r8 and r9 are unvalidated candidates. See the [withdrawal report](docs/ptz-r8-withdrawal.md) and [issue #7](https://github.com/THET1TAN/camera-management-system/issues/7).
 
 A comprehensive Python-based camera management system with PTZ (Pan-Tilt-Zoom) control, ONVIF support, and encrypted credential storage.
 
@@ -186,13 +186,13 @@ If you encounter any issues or have questions:
 
 ⭐ **Star this repository if you find it helpful!**
 
-## Clé locale et retour de version
+## Local encryption key and version rollback
 
-La clé de chiffrement reste dans `.camera_encryption.key`, à côté de la base privée
-`camera_credentials.db`. Conserver ces deux fichiers ensemble. Le code source ne
-contient aucune clé. Une installation neuve sans base génère sa propre clé.
-Pour une base existante, restaurer la clé correspondante ; ne pas effacer la base.
+The encryption key remains in `.camera_encryption.key`, beside the private
+`camera_credentials.db` database. Keep these two files together. The source code
+contains no key. A new installation without a database generates its own key.
+For an existing database, restore the matching key; do not delete the database.
 
-La base restaurée utilise Python 3.9 pour ses fenêtres enfants, comme avant la r8.
-Installer ses dépendances dans ce même interpréteur. Le lanceur r9 appartient à
-une installation de test séparée, décrite dans la PR #4.
+The restored baseline uses Python 3.9 for its child windows, as it did before r8.
+Install the dependencies for that same interpreter. The r9 launcher belongs to
+a separate test installation, described in PR #4.
