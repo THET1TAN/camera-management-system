@@ -1,38 +1,21 @@
-# Camera Management System
+# Camera Management System — r9 B candidate
 
-> Development branch: experimental PTZ r9 direct velocity updates.
-> Run `python camera_viewer_direct_test.py` to test; normal startup keeps the
-> conservative stop/resume mode. Physical smoothness and reliability are unverified.
-> The validated r8 remains on `main` and in the `~v0.2.6` source snapshot.
-> See the [investigation and test procedure](./docs/ptz-release-investigation.md).
+> **Branche de test, PR #4 en brouillon.** La r8 est retirée après régressions
+> terrain et conservée sans correctif dans la [PR #8](https://github.com/THET1TAN/camera-management-system/pull/8).
+> `main` revient à la base publique précédente. Voir [le bilan r8](docs/ptz-r8-withdrawal.md).
 
-Windows desktop application for managing IP cameras, viewing video streams and
-controlling pan, tilt, optical zoom and focus with the keyboard.
+La r9 B essaie une vitesse entièrement nulle lors du relâchement d’un axe, puis
+réapplique tous les axes encore maintenus. Les variations d’amplitude de même
+signe restent directes et les commandes inchangées suivent le délai natif ONVIF.
 
-## Stable reference: v0.2.6 � PTZ r8
+**Premier essai utilisateur, 11 septembre 2026 :** les relâchements fonctionnent
+et le déplacement avec zoom simultané est confirmé. Une pause au relâchement
+reste perceptible. C’est une candidate prometteuse, encore à éprouver en usage
+prolongé ; aucune validation universelle ni passage sur main n’est annoncé.
 
-The following release description concerns the stable version on `main`.
-Its source snapshot is kept in [`~v0.2.6/`](./~v0.2.6/).
-The PTZ sources at this branch's root include the opt-in r9 experiment.
-See the [release notes](./note_de_version-v0.2.6.txt) for changes and validation.
-
-This version provides:
-
-- Independent tracking of held keys, including diagonals combined with zoom.
-- Recovery of missed key releases on Windows and replacement of obsolete requests
-  during rapid direction changes.
-- ONVIF velocity spaces, speed ranges and movement timeouts selected from the
-  camera's advertised capabilities, without a manufacturer-specific PTZ branch.
-- Explicit stops on release, loss of focus and shutdown.
-- Cascading closure of video players, PTZ windows and Camera Manager when their
-  parent Camera Viewer closes.
-- Local camera configuration in SQLite, with credentials encrypted using Fernet.
-
-The r8 camera test confirmed sustained zoom with a diagonal and correct direction
-releases. **A short pause remains when releasing one direction of a diagonal.**
-Pan and tilt share an ONVIF stop group; omitting that stop reintroduced stuck
-movement on the tested camera. Further work on this pause is kept separate from
-this validated version. Compatibility with other devices still needs testing.
+Voir [les recherches, le fonctionnement et le protocole de test](docs/ptz-release-investigation.md).
+Le dossier `~v0.2.6` conserve la r8 historique retirée ; les fichiers actifs de
+cette branche contiennent l’expérience r9 B.
 
 ## Installation
 
@@ -46,6 +29,7 @@ Requirements:
 ```powershell
 git clone https://github.com/THET1TAN/camera-management-system.git
 cd camera-management-system
+git switch investigate/ptz-release-pause
 python -m pip install -r requirements.txt
 ```
 
@@ -59,19 +43,19 @@ Enter the camera address and credentials, enable PTZ if supported, and save.
 Then launch the viewer:
 
 ```powershell
-python camera_viewer.py
+python camera_viewer_direct_test.py
 ```
 
 The viewer offers video playback, PTZ control and access to Camera Manager.
 Close existing application windows before upgrading so new windows use the same
 source version. No rebuilt executable is included in this release; use the Python
-sources. If Python 3.9 is installed, child scripts may select it automatically;
-install the dependencies for that interpreter as well.
+sources. Child windows use the same Python interpreter as their parent Viewer.
+Install the dependencies for the interpreter used to launch this checkout.
 
 ## Keyboard PTZ controls
 
 Click the PTZ window to give it keyboard focus. Its title identifies
-`v0.2.6 r8`. Controls apply only while that window is active.
+`v0.2.6 r9 - Neutral transition test B`. Controls apply only while that window is active.
 
 | Key | Action |
 | --- | --- |
@@ -80,7 +64,7 @@ Click the PTZ window to give it keyboard focus. Its title identifies
 | Shift / Ctrl | Zoom in / out |
 | Q / E | Focus in / out |
 | M / N | Increase / decrease speed |
-| 1�9 | Preset shortcuts, when supported by the camera's preset tokens |
+| 1–9 | Preset shortcuts, when supported by the camera's preset tokens |
 | Esc | Stop and close the PTZ window |
 
 Hold multiple keys for combined movement. For opposite directions on the same
@@ -105,11 +89,10 @@ Stop without waiting for this timeout. An absence of keyboard updates for
 0.5 seconds also requests Stop. If a network failure prevents Stop from reaching
 the camera, the last accepted movement may continue until the camera timeout.
 
-Targeted Stop followed by resumption is the default for cameras that ignore zero
-velocity. For a device **verified** to handle zero axes correctly, direct
-transitions can be enabled with `CAMERA_PTZ_CONSERVATIVE_STOPS=0` before launch.
-This optional mode failed on the reported camera; the normal setting preserves
-reliable releases at the cost of the short transition pause.
+The test launcher enables a whole neutral ContinuousMove before reapplying the
+latest held axes on partial release or reversal. The initial user test confirms
+correct releases and simultaneous zoom, with a remaining pause. The previous
+direct and Stop/resume modes are retained only for comparison; see the test guide.
 
 ### Window ownership
 
@@ -151,12 +134,10 @@ text to the PTZ interface, and a log failure cannot prevent Stop.
 python -m unittest discover -s tests
 ```
 
-The v0.2.6 r8 suite contains **114 passing tests**, covering keyboard combinations,
-rapid input changes, delayed responses, native timeouts, explicit stops, local key
-handling and parent/child shutdown. Tests use simulated camera services and do
-not move a physical camera. Real ONVIF/Zeep serialization and Tk startup/shutdown
-were also checked. Hardware validation applies to the camera tested, not to all
-ONVIF devices.
+The r9 B suite contains **144 passing tests**, including latest input during slow
+responses, neutral transitions, native renewals, keyboard release recovery and
+child shutdown. Real ONVIF/Zeep/Requests serialization and hidden Tk startup were
+also checked. These tests do not establish long-term physical reliability.
 
 ## Source layout
 
@@ -172,7 +153,7 @@ ONVIF devices.
 | `camera_key.py` | Local encryption key loading |
 | `ptz_diagnostics.py` | Bounded command and serialized-velocity logs |
 | `tests/` | Automated regression tests |
-| `~v0.2.6/` | Source snapshot of the current release |
+| `~v0.2.6/` | Withdrawn historical r8 source snapshot |
 
 ## Contributing and support
 
@@ -184,7 +165,7 @@ Report problems in [GitHub Issues](https://github.com/THET1TAN/camera-management
 with the application revision, reproduction steps and relevant PTZ log entries.
 Do not attach your database, encryption key or camera credentials.
 
-Author: [Jo�l Smith-Gravel / THET1TAN](https://github.com/THET1TAN).
+Author: [Joël Smith-Gravel / THET1TAN](https://github.com/THET1TAN).
 
 ## License
 

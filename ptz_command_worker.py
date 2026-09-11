@@ -56,7 +56,7 @@ class PTZCommandWorker:
 
     def __init__(self, ptz, imaging, profile_token, source_token,
                  move_timeout=None, clock=time.monotonic, diagnostics=None, velocity_spaces=None,
-                 conservative_stops=True):
+                 conservative_stops=True, neutral_transitions=False):
         self.ptz = ptz
         self.imaging = imaging
         self.profile_token = profile_token
@@ -65,7 +65,9 @@ class PTZCommandWorker:
         self.clock = clock
         self.diagnostics = diagnostics
         self.velocity_spaces = velocity_spaces or VelocitySpaces()
-        self.conservative_stops = conservative_stops
+        self.neutral_transitions = neutral_transitions
+        self.conservative_stops = conservative_stops and not neutral_transitions
+        self._neutral_pending = False
         # A zero must remain explicit on later refreshes too. Only include
         # advertised groups, or groups actually used when discovery is absent.
         self._direct_pan_tilt = self.velocity_spaces.pan_tilt is not None
@@ -167,6 +169,7 @@ class PTZCommandWorker:
             self._preset_active = False
         if halt is not None:
             self._ptz_halt_done = halt
+        self._neutral_pending = False
         self._trace('stop_accepted', pan_tilt=pan_tilt, zoom=zoom)
         self._report('PTZ stop accepted: ' + ('pan/tilt + zoom' if pan_tilt and zoom
                                             else 'pan/tilt' if pan_tilt else 'zoom'))
@@ -204,13 +207,15 @@ class PTZCommandWorker:
             self._ptz_failed('ContinuousMove', error)
             return
         self.motion = motion
+        if motion != (0, 0, 0):
+            self._neutral_pending = False
         self._trace('move_accepted', pan=motion[0], tilt=motion[1], zoom=motion[2],
                     response_seconds=round(self.clock() - sent_at, 4))
         # Renewal is never a queued copy; the next step reads the latest state.
         # The device's timer starts when it receives the request, not when its
         # response arrives. Slow replies must not postpone the next renewal.
         self._renew_at = sent_at + (self.move_timeout / 3 if self.move_timeout else 0.25)
-        if not self.conservative_stops:
+        if not self.conservative_stops and not self.neutral_transitions:
             # Device Timeout remains native (r8); this is only our refresh rate.
             # Re-send the latest full vector after a reply, not a stored request.
             # Changed input bypasses this interval. Slow replies cannot cause a
@@ -255,7 +260,7 @@ class PTZCommandWorker:
             self._stop_ptz(True, True)
             return True
         if desired.preset is not None:
-            if self.motion != (0, 0, 0):
+            if self.motion != (0, 0, 0) or self._neutral_pending:
                 self._stop_ptz(True, True)
                 return True
             if self.focus != 0 or self._preset_done == desired.preset:
@@ -273,7 +278,7 @@ class PTZCommandWorker:
                 self._ptz_failed('GotoPreset', error)
             return True
         if desired.motion == (0, 0, 0):
-            if self.motion != (0, 0, 0):
+            if self.motion != (0, 0, 0) or self._neutral_pending:
                 self._stop_ptz(True, True)
                 return True
             return False
@@ -287,6 +292,16 @@ class PTZCommandWorker:
                                               self._needs_stop(self.motion[2], desired.zoom))
         if stop_pt or stop_zoom:
             self._stop_ptz(stop_pt, stop_zoom)
+            return True
+        if self.neutral_transitions and any(
+                self._needs_stop(old, new) for old, new in zip(self.motion, desired.motion)):
+            # Experimental compatibility sequence: some devices accept a whole
+            # neutral vector but ignore zeros mixed with nonzero axes. A SOAP
+            # success alone cannot establish this behavior on a physical device.
+            # Re-read input on the next step, including full release/lease expiry.
+            self._neutral_pending = True
+            self._trace('transition_neutral')
+            self._move((0, 0, 0))
             return True
         if self.motion != desired.motion or self.clock() >= self._renew_at:
             self._move(desired.motion)

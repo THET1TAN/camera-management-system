@@ -1,108 +1,133 @@
-# Essai r9 : vitesses PTZ directes
+# r9 — essai B : transition par vitesse nulle
 
-La r8 valid�e reste sur `main` et dans `~v0.2.6`. Cette branche pr�pare un nouvel
-essai demand� apr�s l'�tude th�orique. La fluidit� sur cam�ra reste � valider.
+**Expérimental ; premier essai caméra positif, validation prolongée à poursuivre.** La r8 a été retirée de main après les
+régressions terrain de l’[issue #7](https://github.com/THET1TAN/camera-management-system/issues/7).
+Elle est conservée sans correctif dans la [PR #8](https://github.com/THET1TAN/camera-management-system/pull/8).
+Main revient à la base publique précédant la PR #3, avec sa clé privée externalisée.
+Cette PR #4 développe la r9 séparément ; elle ne valide ni ne réintègre la r8.
 
-## Ce qui change
+## Observation et recherches
 
-Le mode exp�rimental utilise `ContinuousMove`, avec des vitesses sign�es par axe,
-et non des petits d�placements `RelativeMove` vers des positions successives.
-Une diagonale avec zoom devient, au rel�chement de la verticale, une commande
-contenant horizontal maintenu, verticale z�ro et zoom maintenu, sans Stop interm�diaire.
+Le 11 septembre, l’utilisateur observe une diagonale persistante après relâchement
+d’un axe. Le journal montre pourtant l’entrée (0.5, 0, 0), puis plusieurs commandes
+ContinuousMove sérialisées avec la verticale à zéro et une réponse HTTP 200.
+Les réponses durent généralement 36 à 70 ms dans cet extrait ; le Stop final,
+environ 236 ms. L’entrée est détectée mais l’observation mécanique ne suit pas
+la commande. Cela ne prouve pas à lui seul la cause exacte dans le firmware.
 
-- Le d�lai ONVIF natif s�lectionn� en r8 est conserv� (60 secondes annonc�es sur
-  la cam�ra essay�e). Il est ind�pendant du rafra�chissement des commandes.
-- Les groupes annonc�s par la cam�ra figurent dans chaque commande, m�me � z�ro.
-  Si la d�couverte est indisponible, un groupe reste inclus d�s sa premi�re
-  utilisation. Un zoom non annonc� et jamais utilis� n'est pas ajout�.
-- Les z�ros restent explicites dans les rafra�chissements suivants et apr�s une
-  r�cup�ration d'erreur. Ils ne disparaissent plus apr�s une seule mise � jour.
-- L'�tat complet est rafra�chi 250 ms apr�s la r�ponse pr�c�dente, ou plus t�t si
-  le d�lai natif impose son renouvellement. Un changement de touche est envoy�
-  d�s que la requ�te en cours termine, sans attendre ce rafra�chissement.
-- Le moteur conserve seulement l'�tat le plus r�cent et s�rialise les requ�tes.
-  Aucun Stop/reprise n'est envoy� en parall�le.
-- Un rel�chement total, une perte de focus, la fermeture ou un �tat incertain
-  apr�s erreur utilisent encore un Stop explicite. Les fen�tres enfants restent
-  li�es � leur parent.
+[ONVIF PTZ §5.3.3](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec.pdf)
+définit une vitesse signée par axe : zéro doit arrêter l’axe concerné ; omettre
+un groupe laisse son mouvement inchangé. Le joystick est cité comme usage de
+ContinuousMove. RelativeMove indique une translation, pas une vitesse continue.
+Le protocole ne garantit pas le délai de réponse mécanique des appareils.
 
-La r7 avait combin� des transitions directes avec un d�lai de mouvement court.
-Cet essai repart de la s�lection de d�lai r8 et maintient les z�ros dans les
-commandes suivantes. Cela fournit une autre exp�rience; ce n'est pas une preuve
-de la cause de l'�chec pr�c�dent. Une cam�ra qui ignore syst�matiquement z�ro
-ne sera pas corrig�e par la r�p�tition : conserver alors le mode de compatibilit�.
+[easy_onvif 3.1.3](https://pub.dev/documentation/easy_onvif/latest/index.html)
+remplace son arrêt par ContinuousMove à vitesse nulle et rapporte une meilleure
+compatibilité. La [documentation Milestone ONVIF](https://doc.milestonesys.com/mc/pdf/latest/en-US/Milestone_ONVIF_Driver_Documentation.pdf)
+décrit aussi l’arrêt par vitesse nulle. Cela justifie un essai, sans démontrer que
+les zéros partiels fonctionnent sur cette caméra. Les requêtes exactes de TinyCam
+restent inconnues ; son zoom optique simultané est confirmé par l’utilisateur.
+
+## Hypothèse de l’essai B
+
+Un vecteur entièrement nul pourrait être accepté là où un zéro mélangé à des
+axes actifs est ignoré. Aucun nom de fabricant ne sélectionne ce comportement.
+
+- Lors du relâchement ou de l’inversion d’un axe, un vecteur entièrement nul est
+  envoyé. Après sa réponse, le moteur relit l’entrée et réapplique ensemble tous
+  les axes encore maintenus, y compris le zoom inchangé. Aucune reprise périmée.
+- Les changements de vitesse de même signe et l’ajout d’un axe restent directs.
+  L’entrée normalisée entre -1 et 1 et les plages ONVIF annoncées préparent les
+  vitesses analogiques. Aucun contrôleur de jeu n’est implémenté ici.
+- Les groupes annoncés ou déjà utilisés restent explicites, même à zéro. Aucun
+  zoom non annoncé et jamais utilisé n’est ajouté.
+- Les commandes identiques ne sont plus répétées toutes les 250 ms dans l’essai B.
+  Le renouvellement se fait au tiers du délai natif : 20 s pour les 60 s annoncées
+  ici. Sans délai exploitable, le secours reste à 250 ms. Les changements d’entrée
+  passent dès la fin de la requête en cours, sans attendre cette échéance.
+- Une seule requête à la fois, uniquement l’état désiré le plus récent. Le
+  relâchement total, l’expiration du signal clavier, la perte de focus et la
+  fermeture gardent un Stop explicite, même pendant la réponse au neutre.
+  Une réponse perdue impose un Stop avant reprise. Les enfants ferment avec le Viewer.
+
+Deux requêtes successives restent nécessaires au relâchement partiel : une pause
+peut persister. La caméra peut aussi ignorer le vecteur entièrement nul. Aucun
+succès HTTP ne vaut validation mécanique ni activation automatique du mode.
+Réduire les répétitions teste aussi l’hypothèse qu’elles contribuent aux saccades
+du zoom ; cette cause n’est pas encore établie.
 
 ## Lancement
 
-Dans une installation de test de cette branche avec sa base et sa cl� locales :
+Dans une installation de test avec sa copie privée de la base et de la clé :
 
 ```powershell
 python camera_viewer_direct_test.py
 ```
 
-Le lanceur active les vitesses directes et la mesure HTTP pour son processus et
-ses enfants uniquement. Le titre du PTZ affiche **r9 - Direct velocity test**.
-Le Viewer et le gestionnaire lancent leurs fen�tres enfants avec leur propre
-interpr�teur Python. Ils ne recherchent plus une installation Python 3.9 distincte,
-qui ne peut pas charger les d�pendances Python 3.14 h�rit�es du lanceur de test.
-Il n'ajoute aucun panneau de diagnostic. Les fichiers priv�s ne font pas partie
-de la PR. La pr�paration locale utilise une copie priv�e de la configuration;
-les changements faits dans son gestionnaire ne modifient pas l'installation stable.
+Le titre affiche **r9 - Neutral transition test B**. Le lanceur active
+CAMERA_PTZ_NEUTRAL_TRANSITIONS=1 uniquement pour son processus et ses enfants.
+Les enfants utilisent l’interpréteur du Viewer, évitant le mélange Python 3.9 /
+3.14 qui empêchait précédemment le PTZ de démarrer. Aucun panneau de diagnostic.
+La base de test est distincte de la base restaurée à la racine.
 
-Pour comparer au comportement r8, fermer toutes les fen�tres de test puis lancer
-`python camera_viewer.py` dans un environnement sans `CAMERA_PTZ_CONSERVATIVE_STOPS=0`.
-Le titre r9 affiche alors **Compatibility**. La racine de l'installation stable
-continue � lancer la vraie r8 avec son `camera_viewer.py` habituel.
+Pour reproduire l’ancien essai direct dans un terminal de test séparé :
 
-## Essai sur cam�ra
+```powershell
+$env:CAMERA_PTZ_NEUTRAL_TRANSITIONS = '0'
+$env:CAMERA_PTZ_CONSERVATIVE_STOPS = '0'
+python camera_viewer.py
+```
 
-1. Fermer les anciens contr�leurs. Maintenir W + D pendant quelques secondes,
-   rel�cher W, puis rel�cher D : la droite doit continuer seule, puis tout s'arr�ter.
-2. Maintenir W + D + Shift pendant au moins 5 secondes, rel�cher W, puis Shift,
-   puis D. R�p�ter avec Ctrl et dans les quatre diagonales.
-3. Passer de d�placement + zoom au zoom seul, puis revenir au d�placement.
-4. Alterner rapidement les directions et rel�cher toutes les touches. Aucune
-   ancienne direction ne doit reprendre. V�rifier aussi M/N � plusieurs vitesses.
-5. Tester perte de focus, �chap et fermeture du Viewer avec ses fen�tres enfants.
+Avec le neutre désactivé, CAMERA_PTZ_CONSERVATIVE_STOPS=1 garde l’ancien mode
+Stop/reprise pour comparaison. Il conserve les défauts r8 et n’est pas une
+solution validée. Fermer les autres contrôleurs avant chaque essai.
 
-En cas de direction bloqu�e, rel�cher toutes les touches pour le Stop explicite,
-puis fermer le test. Ne pas retenir le mode direct sur la seule base d'une r�ponse
-HTTP r�ussie. Il n'y a pas de d�tection automatique de bonne ex�cution m�canique.
+## Essai physique à effectuer
 
-## Mesures
+1. Maintenir S + A, relâcher S : seule la gauche doit continuer. Relâcher A.
+   Répéter avec les quatre diagonales et chaque axe.
+2. Maintenir une diagonale + Shift puis Ctrl au moins 5 secondes, avant la butée.
+   Relâcher un axe, puis le zoom, puis le dernier axe. Répéter les diagonales.
+3. Passer au zoom seul puis ajouter un déplacement. Alterner rapidement les
+   directions et tester plusieurs vitesses M/N. Aucune direction ancienne ne
+   doit reprendre après relâchement total.
+4. Maintenir au-delà du renouvellement natif, puis vérifier perte de focus,
+   Échap et fermeture du Viewer avec ses fenêtres enfants.
 
-Les journaux locaux `ptz_control_*.log` indiquent r9, le mode, le d�lai natif,
-les vitesses s�rialis�es et les dur�es HTTP. Pour une transition partielle r�ussie,
-on attend un `soap_move` avec l'axe rel�ch� � z�ro et sans `stop_send` interm�diaire.
-Un `stop_send` reste attendu au rel�chement complet.
+En cas de direction bloquée, relâcher toutes les touches pour le Stop explicite.
+Noter séparément les axes, la pause et la continuité du zoom. GetStatus n’a pas
+fourni de position exploitable précédemment ; l’image doit être observée.
 
-`headers_seconds` mesure l'attente avant le hook de r�ponse; `after_headers_seconds`
-mesure le temps restant jusqu'au retour du transport. Ces mesures incluent Requests,
-la connexion et la r�ception; elles ne mesurent pas directement les moteurs.
-Les mesures pr�c�dentes de Stop (r6) �taient de 220 � 270 ms.
+## Vérifications réalisées
 
-Le transport de mesure conserve les r�ponses et erreurs. Les journaux sont born�s
-et n'incluent pas les identifiants, adresses ou corps SOAP. Un �chec du journal ne
-peut pas emp�cher l'arr�t. La mesure est �galement activable s�par�ment avec
-`CAMERA_PTZ_TRACE_HTTP=1` en mode de compatibilit�.
+`python -m unittest discover -s tests` : **144 tests réussis**. Les nouveaux cas
+couvrent les zéros partiels ignorés, la réapplication du zoom, les changements
+pendant une réponse, le relâchement total, l’expiration, la fermeture, les erreurs,
+les presets et les variations analogiques de même signe. Un test garde le cas
+d’une caméra ignorant tous les zéros : il n’est pas présenté comme corrigé.
 
-## Validation et limites
+Les vraies bibliothèques ONVIF/Zeep/Requests ont transmis sur un serveur local
+7 vecteurs complets avec espaces annoncés et Timeout PT1M, puis un Stop final.
+Les changements pendant une réponse retardée utilisent le dernier état.
+Le démarrage et la fermeture Tk masqués sont vérifiés. La connexion réelle à la
+caméra atteint la création de la fenêtre, sans mouvement dans cette vérification.
+Retour utilisateur du 11 septembre : relâchements corrects et déplacement avec
+zoom simultané confirmés ; une pause au relâchement demeure. L’utilisateur décrit
+l’essai B comme le meilleur candidat à ce stade. Les essais prolongés et sur
+d’autres caméras restent nécessaires ; aucune intégration à main n’est autorisée.
 
-Tests : `python -m unittest discover -s tests`.
-Les simulations couvrent le maintien diagonal + zoom avec Timeout natif,
-les z�ros persistants, les r�ponses lentes, les rel�chements, les erreurs, le
-mode de compatibilit� et les cam�ras sans zoom annonc�. Une v�rification s�par�e
-avec les vraies biblioth�ques ONVIF/Zeep/Requests et un serveur local contr�le le
-XML envoy�. Ces v�rifications ne valident pas la fluidit� physique de la cam�ra.
+Les journaux locaux bornés indiquent neutral_transitions, transition_neutral,
+les vitesses et durées HTTP, sans identifiants, adresses ni corps SOAP.
+La PR reste en brouillon jusqu’à validation des essais physiques.
 
-TinyCam a confirm� d�placement lat�ral + zoom optique, mais ses requ�tes exactes
-et le rel�chement d'un axe d'une diagonale n'ont pas �t� compar�s. GetStatus n'a
-pas fourni de retour de position exploitable lors de l'observation pr�c�dente.
+## Mesures du premier essai B sur la caméra
 
-La PR reste en brouillon jusqu'� validation utilisateur. Aucun changement du
-comportement par d�faut ni de la version stable n'est propos� sans cette validation.
-
-R�f�rences : [ONVIF PTZ �5.3.3](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec.pdf),
-[Milestone ONVIF](https://doc.milestonesys.com/mc/pdf/latest/en-US/Milestone_ONVIF_Driver_Documentation.pdf),
-[easy_onvif](https://pub.dev/documentation/easy_onvif/latest/index.html),
-[hooks Requests](https://requests.readthedocs.io/en/latest/user/advanced/#event-hooks).
+Le journal confirme le mode B, le délai natif de 60 secondes et aucune erreur de
+commande sur la session analysée. Les 11 réponses au vecteur nul prennent de
+246 à 331 ms (médiane 272 ms) ; les 21 mouvements non nuls prennent de 30 à 89 ms
+(médiane 57 ms). La dernière commande acceptée est un Stop.
+Ces délais de réponse expliquent une attente dans l’enchaînement sérialisé ;
+ils ne mesurent pas directement la pause mécanique. Le vecteur nul ne s’est donc
+pas révélé aussi rapide que les mouvements ordinaires sur cet essai. Le prochain
+travail sur la pause devra conserver les relâchements et le zoom maintenant
+confirmés, sans conclure que des requêtes concurrentes seraient sûres.
