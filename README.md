@@ -1,5 +1,10 @@
 # Camera Management System — r9 B candidate
 
+> **Nouvel essai C, non validé :** reprise anticipée pour tenter de réduire la
+> pause. Lancer `python camera_viewer_early_resume_test.py` et vérifier le titre
+> **r9 - Early resume test C**. Voir [les consignes et limites](docs/ptz-early-resume-test.md).
+> B reste disponible avec `python camera_viewer_direct_test.py`.
+
 > **Branche de test, PR #4 en brouillon.** La r8 est retirée après régressions
 > terrain et conservée sans correctif dans la [PR #8](https://github.com/THET1TAN/camera-management-system/pull/8).
 > `main` revient à la base publique précédente. Voir [le bilan r8](docs/ptz-r8-withdrawal.md).

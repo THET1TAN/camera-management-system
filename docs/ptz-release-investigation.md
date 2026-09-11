@@ -1,5 +1,9 @@
 # r9 — essai B : transition par vitesse nulle
 
+Un [essai C distinct de reprise anticipée](ptz-early-resume-test.md) cherche
+maintenant à réduire la pause. Le lanceur B et son comportement séquentiel sont
+conservés pour comparaison ; le résultat positif ci-dessous concerne B seulement.
+
 **Expérimental ; premier essai caméra positif, validation prolongée à poursuivre.** La r8 a été retirée de main après les
 régressions terrain de l’[issue #7](https://github.com/THET1TAN/camera-management-system/issues/7).
 Elle est conservée sans correctif dans la [PR #8](https://github.com/THET1TAN/camera-management-system/pull/8).
