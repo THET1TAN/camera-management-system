@@ -1,9 +1,9 @@
 # Camera Management System — r9 B candidate
 
-> **New C experiment, not yet validated:** early resume to try to reduce the
-> pause. Run `python camera_viewer_early_resume_test.py` and check for the title
-> **r9 - Early resume test C**. See the [test instructions and limitations](docs/ptz-early-resume-test.md).
-> B remains available through `python camera_viewer_direct_test.py`.
+> **C experiment withdrawn:** field testing reproduced a stuck diagonal after
+> releasing one direction. The old C launcher now opens sequential B instead.
+> Use `python camera_viewer_direct_test.py` and check for
+> **r9 - Neutral transition test B**. See the [regression report](docs/ptz-early-resume-test.md).
 
 > **Test branch, draft PR #4.** r8 was withdrawn after field regressions and is
 > preserved without code fixes in [PR #8](https://github.com/THET1TAN/camera-management-system/pull/8).

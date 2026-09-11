@@ -1,99 +1,76 @@
-# r9 C — essai de reprise anticipée
+# r9 C withdrawn — partial key-release regression
 
-**Expérimental, en attente d'essai utilisateur.** La r9 B reste le meilleur
-candidat testé : relâchements corrects et déplacement avec zoom, avec une pause.
-`main` et la r8 retirée ne sont pas modifiés. La référence B est le commit
-`96ea754ab59f1de55b171c4f62927797ea6efb42` ; son moteur séquentiel reste inchangé.
+**Withdrawn after the September 11, 2026 camera test. Do not use C as a candidate.**
+r9 B remains the best tested candidate, with correct partial releases and
+simultaneous movement and zoom in its initial user test. B still has a release
+pause and needs extended field testing. Main remains on the pre-r8 public baseline.
 
-## Observation préalable
+## Observed regression
 
-Le moteur B n'ajoute pas d'attente volontaire entre le neutre et la reprise.
-Sur la session utilisateur B, la réponse au neutre prenait 272 ms en médiane.
-Une comparaison de commandes uniquement nulles sur la caméra, sans mouvement
-non nul, donne les médianes suivantes (3 requêtes par variante, caméra à l'arrêt) :
+The user held a diagonal, released one direction, and observed continued diagonal
+movement. The C trace confirms that the released tilt axis was detected and sent
+as zero. The sequence relative to the partial release was:
 
-| Commande | Médiane |
+| Event | Approximate elapsed time |
 | --- | --- |
-| ContinuousMove nul, délai natif explicite | 252 ms |
-| ContinuousMove nul, délai laissé au défaut | 245 ms |
-| RelativeMove avec translation nulle | 242 ms |
+| Input changes from (0.5, -0.5, 0) to (0.5, 0, 0) | 0 ms |
+| Full neutral vector dispatched | 1 ms |
+| Early resume (0.5, 0, 0) dispatched | 90 ms |
+| Early resume response accepted | 237 ms |
+| Neutral response accepted | 263 ms |
+| Latest vector (0.5, 0, 0) reapplied | 263 ms |
+| Reapplication response accepted | 316 ms |
 
-Ces petits échantillons ne permettent pas de conclure à une différence utile.
-Remplacer simplement la commande neutre ne paraît pas résoudre la pause.
+All three requests returned HTTP 200. Despite the accepted reapplication, the
+user observed that the released axis continued. A full release later sent Stop.
+The issue is therefore not explained by a missed key-up event in this trace.
 
-[ONVIF PTZ §5.3](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec.pdf)
-prévoit que les mouvements peuvent être remplacés et demande de minimiser la
-latence, sans garantir un délai précis. Il ne garantit pas l'ordre d'exécution
-de requêtes concurrentes. L'essai C ne suppose donc pas qu'une réponse reçue
-prouve l'ordre réel des mouvements.
+The internal execution order is unknown. An overlapping move may interfere with
+the neutral transition, but the trace does not prove the firmware mechanism.
+The simulations covered late neutral execution; they did not establish that an
+overlapping move cannot cancel or alter a neutral transition inside the camera.
+HTTP success and final command order are insufficient to infer mechanical state.
 
-## Ce que teste C
+## Decision and current entry points
 
-Lors d'une transition nécessitant le neutre, un client ONVIF séparé envoie
-uniquement un vecteur nul. Après environ 60 ms, si sa réponse est toujours en
-attente et qu'un mouvement reste demandé, le moteur essaie une seule reprise
-anticipée avec le dernier état des axes. Le délai réel dépend de l'ordonnancement
-et figure dans le journal. Ce délai n'est pas une mesure de la pause mécanique.
+- The application no longer constructs or selects EarlyResumeWorker or its second
+  ONVIF client. The module remains solely as a historical experiment for analysis.
+- `camera_viewer_early_resume_test.py` announces that C was withdrawn and launches
+  sequential B instead. Existing local C shortcuts consequently return to B too.
+- A stale CAMERA_PTZ_EARLY_RESUME=1 setting on direct PTZ startup also selects B;
+  it cannot reactivate overlap. The local diagnostic trace records this fallback.
+- B's command worker is unchanged. It still waits for the neutral response before
+  resuming all held axes, keeping its known pause.
 
-Les clients possèdent des objets Zeep, des authentifications WSSE et des sessions
-HTTP distincts. Le thread auxiliaire ne peut envoyer que du neutre. Il ne modifie
-pas l'état du moteur, ne relance pas de mouvement et n'exécute pas de preset.
-
-Une seule transition peut être en cours, avec au plus une reprise anticipée.
-Après la fin des deux requêtes, le moteur relit les touches et réapplique l'état
-complet. Cette réapplication traite le cas où le neutre s'exécute après la reprise.
-Elle peut toutefois produire une seconde pause ou une saccade sur certains
-appareils ; il faut observer ce point dans le test physique.
-
-Relâchement total, expiration du signal clavier, fermeture, perte de focus ou
-preset empêchent une nouvelle reprise anticipée. Le Stop définitif intervient
-après la fin des requêtes déjà engagées, afin qu'aucune ancienne reprise ne
-parte après lui. Une erreur de l'une des requêtes impose un Stop avant reprise.
-Les délais réseau des deux clients PTZ sont réglés à une seconde. En cas de
-coupure réseau, la durée native caméra demeure la limite du dernier mouvement
-accepté, comme pour B ; aucune garantie d'arrêt physique sans communication.
-
-Ce mode peut réduire la pause si la caméra applique le neutre avant de répondre.
-Il peut aussi n'apporter aucun gain si elle sérialise ses opérations, ou provoquer
-des saccades si elle les exécute dans un ordre défavorable. Aucun fabricant n'est
-ciblé et aucune activation automatique n'est faite. B reste disponible tel quel.
-
-## Lancer le test quand disponible
-
-Fermer les anciens contrôleurs, puis lancer dans cette branche :
+After closing old PTZ windows, use:
 
 ```powershell
-python camera_viewer_early_resume_test.py
+python camera_viewer_direct_test.py
 ```
 
-Le PTZ doit afficher **r9 - Early resume test C**. Le lanceur active uniquement
-pour son processus et ses enfants `CAMERA_PTZ_EARLY_RESUME=1`, les transitions
-neutres et la mesure HTTP. Il n'ajoute pas de diagnostic à l'interface.
+The title must show **r9 - Neutral transition test B**. No new C test is requested.
+No camera settings, stored credentials or main application sources were changed.
 
-1. Maintenir S + A, puis relâcher S en gardant A. Comparer la pause à B :
-   plus courte, identique, plus longue ou double pause. L'axe relâché doit s'arrêter.
-2. Maintenir une diagonale + Shift pendant 5 secondes puis relâcher un axe.
-   Refaire avec Ctrl. Le zoom et le dernier axe doivent rester continus.
-3. Changer rapidement de direction puis tout relâcher. Vérifier l'arrêt complet,
-   puis la fermeture du Viewer avec ses fenêtres enfants.
+## Retained research and measurements
 
-Si un axe reste bloqué, relâcher toutes les touches, appuyer sur Échap et revenir
-au lanceur B. Pour B : `python camera_viewer_direct_test.py`. Celui-ci force
-explicitement `CAMERA_PTZ_EARLY_RESUME=0`, même si le terminal l'avait activé.
-Le test utilisateur se fait librement, sans attente programmée ni délai de réponse.
+[ONVIF PTZ section 5.3](https://www.onvif.org/specs/srv/ptz/ONVIF-PTZ-Service-Spec.pdf)
+describes replaceable move commands without guaranteeing a response latency or
+the execution order of concurrent requests. C attempted one early resume after
+about 60 ms on a separate HTTP session, then reapplied the latest state after both
+responses. The actual dispatch in this test was about 89 ms after the neutral.
 
-## Vérifications avant essai physique
+The preceding B session measured a 272 ms median neutral response. A zero-only
+stationary probe measured about 252 ms for ContinuousMove with an explicit native
+timeout, 245 ms with the default timeout and 242 ms for RelativeMove with zero
+translation (three samples per variant). These measurements did not show a useful
+gain from merely changing the neutral command. They do not measure motor latency.
 
-- **159 tests réussis**, dont reprise avant réponse, neutre exécuté en retard,
-  changements rapides, relâchement total, expiration, fermeture, perte de focus,
-  preset, erreurs des deux requêtes et impossibilité de démarrer le thread.
-- Vraies requêtes ONVIF/Zeep/Requests sur un serveur local : deux clients et
-  sessions distincts, reprise avant réponse, exécution tardive du neutre,
-  réapplication du dernier état et Stop final.
-- Démarrage et fermeture du PTZ C en Tk masqué ; connexion réelle atteignant
-  la création du PTZ avec les deux clients, sans mouvement dans cette vérification.
+## Checks after withdrawal
 
-Les événements locaux `early_neutral_send`, `early_resume_send` et
-`early_reconcile` permettent de comparer l'attente au résultat observé.
-Les journaux sont bornés et ne contiennent pas d'identifiants ni de corps SOAP.
-La réduction de pause et la fiabilité physique de C restent à valider.
+The 161-test suite passes, including the existing B regressions and new checks
+that an old C launcher clears the overlap setting and that direct PTZ startup
+with a stale C environment creates only the sequential B worker. Archived C
+simulation results remain historical; they are not evidence of physical validity.
+
+Future work on the pause must preserve B's observed release behavior. The failed
+concurrent strategy must not be re-enabled on the basis of HTTP success alone.

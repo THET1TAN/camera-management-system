@@ -1,15 +1,10 @@
-"""Start the opt-in r9 C experiment; the B launcher stays sequential."""
-import os
-from pathlib import Path
-import runpy
+"""Retired C entry point: explicitly redirect to the sequential r9 B candidate."""
+from camera_viewer_direct_test import main as launch_b
 
 
 def main():
-    os.environ['CAMERA_PTZ_CONSERVATIVE_STOPS'] = '0'
-    os.environ['CAMERA_PTZ_NEUTRAL_TRANSITIONS'] = '1'
-    os.environ['CAMERA_PTZ_EARLY_RESUME'] = '1'
-    os.environ['CAMERA_PTZ_TRACE_HTTP'] = '1'
-    runpy.run_path(str(Path(__file__).with_name('camera_viewer.py')), run_name='__main__')
+    print('r9 C was withdrawn after a key-release regression. Starting r9 B instead.')
+    launch_b()
 
 
 if __name__ == '__main__':

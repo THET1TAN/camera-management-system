@@ -1,4 +1,7 @@
-"""Opt-in experiment: one early resume while a neutral reply is pending.
+"""WITHDRAWN C experiment, retained only for regression analysis.
+
+The application no longer selects this worker: a camera test retained the
+released diagonal axis despite accepted neutral and reconciliation requests.
 
 An HTTP reply does not establish physical execution order. Always reconcile the
 latest input after BOTH requests finish; never overlap two neutral transitions.

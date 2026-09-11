@@ -193,8 +193,7 @@ class PTZController:
     def update_title_status(self, status=None):
         if status is None:
             status = "In Use" if self.root.focus_get() else "Idle"
-        mode = ('Early resume test C' if getattr(command_worker, 'early_resume_enabled', False) is True else
-                'Neutral transition test B' if command_worker.neutral_transitions else
+        mode = ('Neutral transition test B' if command_worker.neutral_transitions else
                 'Compatibility' if command_worker.conservative_stops else 'Direct velocity test')
         self.root.title(f"PTZ Control v{VERSION} r{REVISION} - {mode} - Camera {self.camera_id} - {status}")
 
@@ -245,19 +244,11 @@ def main(argv=None):
             '1', 'true', 'yes', 'on')
         if neutral_transitions:
             conservative_stops = False
-        early_resume = os.environ.get('CAMERA_PTZ_EARLY_RESUME', '').strip().lower() in (
+        withdrawn_early_resume_requested = os.environ.get('CAMERA_PTZ_EARLY_RESUME', '').strip().lower() in (
             '1', 'true', 'yes', 'on')
-        neutral_service = None
-        if early_resume:
-            from onvif.client import ONVIFService
-            from zeep.transports import Transport
-            address, wsdl_path, binding = camera.get_definition('ptz')
-            # A separate client, WSSE token and HTTP session are required. Never
-            # share the mutable Zeep/authentication/transport objects across calls.
-            neutral_service = ONVIFService(
-                address, username, password, wsdl_path, encrypt=camera.encrypt,
-                dt_diff=camera.dt_diff, binding_name=binding,
-                transport=Transport(operation_timeout=1.0, timeout=3))
+        if withdrawn_early_resume_requested:
+            # C failed physical partial releases. A stale terminal setting must
+            # not reactivate overlapping requests; return to sequential B.
             neutral_transitions, conservative_stops = True, False
     except Exception as e:
         print(f"Error connecting to camera: {e}")
@@ -274,31 +265,22 @@ def main(argv=None):
         diagnostics.record('session', version=VERSION, revision=REVISION,
                            move_timeout=move_timeout, conservative_stops=conservative_stops,
                            neutral_transitions=neutral_transitions,
-                           early_resume=early_resume,
+                           early_resume=False,
+                           withdrawn_early_resume_requested=withdrawn_early_resume_requested,
                            direct_refresh_seconds=(None if conservative_stops or neutral_transitions else
                                                    PTZCommandWorker.DIRECT_REFRESH_SECONDS))
         diagnostics.record('velocity_spaces', **velocity_spaces.summary())
         diagnostics.record('wire_trace', enabled=install_wire_trace(ptz_service, diagnostics))
-        if neutral_service is not None:
-            diagnostics.record('neutral_wire_trace', enabled=install_wire_trace(neutral_service, diagnostics))
         if os.environ.get('CAMERA_PTZ_TRACE_HTTP', '').strip().lower() in ('1', 'true', 'yes', 'on'):
             from ptz_http_timing import install_http_timing
             diagnostics.record('http_timing_enabled', enabled=install_http_timing(ptz_service, diagnostics))
-            if neutral_service is not None:
-                diagnostics.record('neutral_http_timing', enabled=install_http_timing(neutral_service, diagnostics))
     except OSError:
         pass
-    worker_type = PTZCommandWorker
-    worker_options = {}
-    if early_resume:
-        from ptz_early_resume import EarlyResumeWorker
-        worker_type = EarlyResumeWorker
-        worker_options['neutral_service'] = neutral_service
-    command_worker = worker_type(ptz_service, imaging_service, media_profile.token,
+    command_worker = PTZCommandWorker(ptz_service, imaging_service, media_profile.token,
                                       video_source_token, move_timeout=move_timeout,
                                       diagnostics=diagnostics, velocity_spaces=velocity_spaces,
                                       conservative_stops=conservative_stops,
-                                      neutral_transitions=neutral_transitions, **worker_options)
+                                      neutral_transitions=neutral_transitions)
     root = tk.Tk()
     controller = PTZController(root, camera_id, camera_ip)
 
