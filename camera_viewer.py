@@ -3,8 +3,6 @@ import sqlite3
 from cryptography.fernet import Fernet
 import tkinter as tk
 from tkinter import messagebox
-import subprocess
-import shutil
 import sys
 from child_processes import ChildProcesses, parent_lifetime
 from camera_key import load_encryption_key
@@ -17,17 +15,6 @@ DB_FILE = os.path.join(os.path.dirname(__file__), 'camera_credentials.db')
 
 # Initialize encryption
 cipher = Fernet(ENCRYPTION_KEY)
-
-def get_python39():
-    python_exe = shutil.which("python3.9")
-    if not python_exe:
-        try:
-            python_exe = subprocess.check_output(
-                ["py", "-3.9", "-c", "import sys; print(sys.executable)"]
-            ).decode().strip()
-        except Exception:
-            python_exe = sys.executable
-    return python_exe
 
 def get_current_python():
     """Get the current Python executable path"""
@@ -160,9 +147,9 @@ class CameraViewer:
 
     def play_camera_thread(self, camera):
         decrypted_password = cipher.decrypt(camera[3]).decode()
-        python_exe = get_python39()  # Use Python 3.9 for ONVIF/camera interaction
+        python_exe = get_current_python()  # Keep the Viewer's dependency environment.
         if not python_exe:
-            messagebox.showerror("Error", "Python 3.9 is required to view cameras")
+            messagebox.showerror("Error", "Python interpreter unavailable")
             return
             
         self.children.spawn([python_exe,
@@ -173,9 +160,9 @@ class CameraViewer:
                                   decrypted_password])
 
     def play_ptz_thread(self, camera):
-        python_exe = get_python39()
+        python_exe = get_current_python()
         if not python_exe:
-            messagebox.showerror("Error", "Python 3.9 is required for PTZ")
+            messagebox.showerror("Error", "Python interpreter unavailable")
             return
         decrypted_password = cipher.decrypt(camera[3]).decode()
         self.children.spawn([python_exe,

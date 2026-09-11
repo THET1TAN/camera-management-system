@@ -206,6 +206,9 @@ class WindowOwnershipTests(unittest.TestCase):
             processes = []
 
             def popen(*args, **kwargs):
+                # Do not replace interpreter selection in this test: a Viewer
+                # started on 3.14 must not launch 3.9 with inherited 3.14 packages.
+                self.assertEqual(args[0][0], sys.executable)
                 child = Mock()
                 child.poll.return_value = None
                 child.stdin = io.BytesIO()
@@ -213,12 +216,11 @@ class WindowOwnershipTests(unittest.TestCase):
                 return child
 
             camera = (1, 'test-ip', 'test-user', b'encrypted-test-password', 1)
-            with patch.object(module, 'get_python39', return_value=sys.executable):
-                with patch('child_processes.subprocess.Popen', side_effect=popen):
-                    app.play_camera_thread(camera)
-                    app.play_ptz_thread(camera)
-                    if with_manager:
-                        app.open_camera_manager()
+            with patch('child_processes.subprocess.Popen', side_effect=popen):
+                app.play_camera_thread(camera)
+                app.play_ptz_thread(camera)
+                if with_manager:
+                    app.open_camera_manager()
             self.assertEqual(len(app.children.processes), 3 if with_manager else 2)
             app.on_closing()
             for process in processes:

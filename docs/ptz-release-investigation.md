@@ -42,6 +42,9 @@ python camera_viewer_direct_test.py
 
 Le lanceur active les vitesses directes et la mesure HTTP pour son processus et
 ses enfants uniquement. Le titre du PTZ affiche **r9 - Direct velocity test**.
+Le Viewer et le gestionnaire lancent leurs fen�tres enfants avec leur propre
+interpr�teur Python. Ils ne recherchent plus une installation Python 3.9 distincte,
+qui ne peut pas charger les d�pendances Python 3.14 h�rit�es du lanceur de test.
 Il n'ajoute aucun panneau de diagnostic. Les fichiers priv�s ne font pas partie
 de la PR. La pr�paration locale utilise une copie priv�e de la configuration;
 les changements faits dans son gestionnaire ne modifient pas l'installation stable.

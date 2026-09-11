@@ -6,7 +6,6 @@ from tkinter import simpledialog, messagebox
 import threading
 import subprocess
 import sys
-import shutil
 from child_processes import ChildProcesses, parent_lifetime
 from camera_key import load_encryption_key
 
@@ -42,7 +41,7 @@ def encrypt_data(data):
     return cipher.encrypt(str(data).encode())
 
 def is_encrypted(data):
-    """Vérifie si les données sont déjà cryptées"""
+    """V�rifie si les donn�es sont d�j� crypt�es"""
     try:
         cipher.decrypt(data)
         return True
@@ -50,7 +49,7 @@ def is_encrypted(data):
         return False
 
 def decrypt_data(encrypted_data):
-    """Décrypte les données si elles sont cryptées"""
+    """D�crypte les donn�es si elles sont crypt�es"""
     try:
         if is_encrypted(encrypted_data):
             return cipher.decrypt(encrypted_data).decode()
@@ -83,7 +82,7 @@ def get_cameras():
     decrypted_cameras = []
     for camera in cameras:
         try:
-            # Convertir les données en bytes si elles sont stockées en texte
+            # Convertir les donn�es en bytes si elles sont stock�es en texte
             ip_data = camera[1].encode() if isinstance(camera[1], str) else camera[1]
             username_data = camera[2].encode() if isinstance(camera[2], str) else camera[2]
             password_data = camera[3].encode() if isinstance(camera[3], str) else camera[3]
@@ -105,21 +104,9 @@ def get_current_python():
     """Get the current Python executable path"""
     return sys.executable
 
-def get_python39():
-    """Get Python 3.9 executable path (required for ONVIF/camera interaction)"""
-    python_exe = shutil.which("python3.9")
-    if not python_exe:
-        try:
-            python_exe = subprocess.check_output(
-                ["py", "-3.9", "-c", "import sys; print(sys.executable)"]
-            ).decode().strip()
-        except Exception:
-            python_exe = None
-    return python_exe
-
 # Play camera stream
 def play_camera(ip, username, password):
-    python_exe = get_python39()
+    python_exe = get_current_python()
     script_path = os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py')
     subprocess.Popen([python_exe, script_path, ip, username, password])
 
@@ -146,8 +133,8 @@ def update_camera(camera_id, ip, username, password, ptz=0):
 
 def migrate_existing_data():
     """
-    Fonction à exécuter une seule fois pour migrer les données existantes
-    vers le format crypté
+    Fonction � ex�cuter une seule fois pour migrer les donn�es existantes
+    vers le format crypt�
     """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -156,7 +143,7 @@ def migrate_existing_data():
     
     for camera in cameras:
         try:
-            # Ne crypter que si les données ne sont pas déjà cryptées
+            # Ne crypter que si les donn�es ne sont pas d�j� crypt�es
             ip_data = camera[1] if isinstance(camera[1], bytes) else encrypt_data(camera[1])
             username_data = camera[2] if isinstance(camera[2], bytes) else encrypt_data(camera[2])
             password_data = camera[3] if is_encrypted(camera[3]) else encrypt_data(camera[3])
@@ -181,30 +168,30 @@ class CameraApp:
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
         
-        # Créer un frame principal
+        # Cr�er un frame principal
         main_frame = tk.Frame(root)
         main_frame.grid(row=0, column=0, sticky="nsew")
         main_frame.grid_rowconfigure(0, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
 
-        # Créer un frame pour la liste avec scrollbar
+        # Cr�er un frame pour la liste avec scrollbar
         list_frame = tk.Frame(main_frame)
         list_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         list_frame.grid_rowconfigure(0, weight=1)
         list_frame.grid_columnconfigure(0, weight=1)
 
-        # Créer la scrollbar
+        # Cr�er la scrollbar
         scrollbar = tk.Scrollbar(list_frame)
         scrollbar.grid(row=0, column=1, sticky="ns")
 
         # Configuration de la zone de texte avec scrollbar
         self.camera_list = tk.Text(list_frame, height=10, state=tk.DISABLED,
                                  yscrollcommand=scrollbar.set, 
-                                 cursor="arrow")  # Curseur par défaut en flèche
+                                 cursor="arrow")  # Curseur par d�faut en fl�che
         self.camera_list.grid(row=0, column=0, sticky="nsew")
         scrollbar.config(command=self.camera_list.yview)
 
-        # Bouton Add Camera en bas, centré avec sa taille naturelle
+        # Bouton Add Camera en bas, centr� avec sa taille naturelle
         button_frame = tk.Frame(main_frame)  # Frame conteneur pour le bouton
         button_frame.grid(row=1, column=0, pady=5)
         button_frame.grid_columnconfigure(0, weight=1)  # Centre le bouton horizontalement
@@ -213,7 +200,7 @@ class CameraApp:
                                   command=self.open_add_camera_window)
         self.add_button.grid(row=0, column=0)  # Le bouton garde sa taille naturelle
 
-        # Initialiser la liste des caméras
+        # Initialiser la liste des cam�ras
         self.load_cameras()
 
         # Configuration des touches de navigation
@@ -233,7 +220,7 @@ class CameraApp:
         for camera in cameras:
             self.camera_list.insert(tk.END, f"ID: {camera[0]}, IP: {camera[1]} ")
             
-            # Créer un frame invisible pour les boutons de chaque caméra
+            # Cr�er un frame invisible pour les boutons de chaque cam�ra
             button_frame = tk.Frame(self.camera_list, highlightthickness=0, bd=0, bg=self.camera_list.cget('bg'))
             button_frame.configure(pady=5, padx=5)
             
@@ -285,7 +272,7 @@ class CameraApp:
         add_camera_window = tk.Toplevel(self.root)
         add_camera_window.title("Add Camera")
 
-        # Rendre la fenêtre modale
+        # Rendre la fen�tre modale
         add_camera_window.grab_set()  
         add_camera_window.transient(self.root)
 
@@ -328,14 +315,14 @@ class CameraApp:
         confirm_button = tk.Button(add_camera_window, text="Add", command=confirm_add)
         confirm_button.grid(row=4, columnspan=2, padx=5, pady=5)
 
-        # Bind la touche Entrée pour valider
+        # Bind la touche Entr�e pour valider
         add_camera_window.bind('<Return>', lambda e: confirm_add())
 
     def open_edit_camera_window(self, camera):
         edit_camera_window = tk.Toplevel(self.root)
         edit_camera_window.title("Edit Camera")
 
-        # Rendre la fenêtre modale
+        # Rendre la fen�tre modale
         edit_camera_window.grab_set()
         edit_camera_window.transient(self.root)
 
@@ -381,7 +368,7 @@ class CameraApp:
         save_button = tk.Button(edit_camera_window, text="Save", command=save_changes)
         save_button.grid(row=4, columnspan=2, padx=5, pady=5)
 
-        # Bind la touche Entrée pour valider
+        # Bind la touche Entr�e pour valider
         edit_camera_window.bind('<Return>', lambda e: save_changes())
 
     def delete_camera_confirm(self, camera):
@@ -390,23 +377,23 @@ class CameraApp:
             self.load_cameras()
 
     def play_camera_thread(self, camera):
-        python_exe = get_python39()  # Use Python 3.9 for ONVIF/camera interaction
+        python_exe = get_current_python()
         if not python_exe:
-            messagebox.showerror("Error", "Python 3.9 is required to view cameras")
+            messagebox.showerror("Error", "Python interpreter unavailable")
             return
         
         decrypted_password = cipher.decrypt(camera[3]).decode()
         self.children.spawn([python_exe,
                                   os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py'),
-                                  str(camera[0]),  # ID de la caméra en premier argument
+                                  str(camera[0]),  # ID de la cam�ra en premier argument
                                   camera[1],       # Adresse IP
                                   camera[2],       # Username
                                   decrypted_password])
 
     def play_ptz_thread(self, camera):
-        python_exe = get_python39()
+        python_exe = get_current_python()
         if not python_exe:
-            messagebox.showerror("Error", "Python 3.9 is required for PTZ")
+            messagebox.showerror("Error", "Python interpreter unavailable")
             return
         decrypted_password = cipher.decrypt(camera[3]).decode()
         self.children.spawn([python_exe,
@@ -425,13 +412,13 @@ class CameraApp:
 if __name__ == "__main__":
     init_db()
     try:
-        # Tentative de migration des données existantes
+        # Tentative de migration des donn�es existantes
         migrate_existing_data()
     except Exception as e:
         print(f"Global migration error: {e}")
     
     root = tk.Tk()
     root.title("Camera Manager")
-    root.geometry("390x250")  # Modification de la largeur initiale à 390px
+    root.geometry("390x250")  # Modification de la largeur initiale � 390px
     app = CameraApp(root)
     root.mainloop()
