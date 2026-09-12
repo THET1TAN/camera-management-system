@@ -9,8 +9,8 @@ from child_processes import parent_lifetime
 from ptz_diagnostics import PTZDiagnostics, install_wire_trace
 from ptz_velocity import VelocitySpaces
 
-VERSION = "0.2.7"
-REVISION = 9
+VERSION = "0.2.6"
+REVISION = 8
 KEY_POLL_INTERVAL_MS = 30
 key_is_down = None
 command_worker = None
@@ -193,9 +193,7 @@ class PTZController:
     def update_title_status(self, status=None):
         if status is None:
             status = "In Use" if self.root.focus_get() else "Idle"
-        mode = ('Neutral transition B' if command_worker.neutral_transitions else
-                'Compatibility' if command_worker.conservative_stops else 'Direct velocity test')
-        self.root.title(f"PTZ Control v{VERSION} r{REVISION} - {mode} - Camera {self.camera_id} - {status}")
+        self.root.title(f"PTZ Control v{VERSION} r{REVISION} - Camera {self.camera_id} - {status}")
 
     def on_focus_in(self, event):
         global window_active
@@ -240,16 +238,6 @@ def main(argv=None):
         velocity_spaces = VelocitySpaces.from_options(configuration, options)
         conservative_stops = os.environ.get('CAMERA_PTZ_CONSERVATIVE_STOPS', '1').strip().lower() not in (
             '0', 'false', 'no', 'off')
-        neutral_transitions = os.environ.get('CAMERA_PTZ_NEUTRAL_TRANSITIONS', '1').strip().lower() in (
-            '1', 'true', 'yes', 'on')
-        if neutral_transitions:
-            conservative_stops = False
-        withdrawn_early_resume_requested = os.environ.get('CAMERA_PTZ_EARLY_RESUME', '').strip().lower() in (
-            '1', 'true', 'yes', 'on')
-        if withdrawn_early_resume_requested:
-            # C failed physical partial releases. A stale terminal setting must
-            # not reactivate overlapping requests; return to sequential B.
-            neutral_transitions, conservative_stops = True, False
     except Exception as e:
         print(f"Error connecting to camera: {e}")
         return 1
@@ -263,24 +251,15 @@ def main(argv=None):
     try:
         diagnostics = PTZDiagnostics(Path(__file__).with_name(f'ptz_control_{os.getpid()}.log'))
         diagnostics.record('session', version=VERSION, revision=REVISION,
-                           move_timeout=move_timeout, conservative_stops=conservative_stops,
-                           neutral_transitions=neutral_transitions,
-                           early_resume=False,
-                           withdrawn_early_resume_requested=withdrawn_early_resume_requested,
-                           direct_refresh_seconds=(None if conservative_stops or neutral_transitions else
-                                                   PTZCommandWorker.DIRECT_REFRESH_SECONDS))
+                           move_timeout=move_timeout, conservative_stops=conservative_stops)
         diagnostics.record('velocity_spaces', **velocity_spaces.summary())
         diagnostics.record('wire_trace', enabled=install_wire_trace(ptz_service, diagnostics))
-        if os.environ.get('CAMERA_PTZ_TRACE_HTTP', '').strip().lower() in ('1', 'true', 'yes', 'on'):
-            from ptz_http_timing import install_http_timing
-            diagnostics.record('http_timing_enabled', enabled=install_http_timing(ptz_service, diagnostics))
     except OSError:
         pass
     command_worker = PTZCommandWorker(ptz_service, imaging_service, media_profile.token,
                                       video_source_token, move_timeout=move_timeout,
                                       diagnostics=diagnostics, velocity_spaces=velocity_spaces,
-                                      conservative_stops=conservative_stops,
-                                      neutral_transitions=neutral_transitions)
+                                      conservative_stops=conservative_stops)
     root = tk.Tk()
     controller = PTZController(root, camera_id, camera_ip)
 
