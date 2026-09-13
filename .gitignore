@@ -35,6 +35,7 @@ ENV/
 # Project specific
 camera_credentials.db
 .camera_encryption.key
+camera_health.json
 vlc-log.txt
 *.log
 

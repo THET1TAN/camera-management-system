@@ -1,0 +1,24 @@
+v0.2.8-preview — Indicateurs de disponibilité des caméras (issue #10)
+Version de travail du 13 septembre 2026, à valider avant fusion.
+
+- Pastille et texte Online / Degraded / Unreachable / Checking dans Camera Viewer.
+- RTSP OPTIONS sans lecture vidéo ni authentification RTSP.
+- Repli HTTP/ONVIF uniquement après échec RTSP, puis ping uniquement après échec
+  de ces deux contrôles. Une caméra joignable seulement par ping est Degraded.
+- Confirmation après deux échecs consécutifs ; récupération automatique.
+- Découverte ONVIF conservée en mémoire, ports personnalisables par caméra.
+- Détails et heures de vérification/changement accessibles au survol ou au focus.
+- Surveillance isolée de Tk et arrêt borné, avec fermeture des processus enfants.
+- Rafraîchissement de la liste après fermeture de Camera Manager.
+
+La racine et ~v0.2.8 contiennent les mêmes sources de travail.
+~v0.2.7 conserve intégralement la version précédente (40 fichiers vérifiés).
+Les bases, clés privées et configurations locales ne font pas partie des snapshots
+publiés. Le comportement PTZ reste celui de la v0.2.7 r9 B.
+
+Deux caméras physiques répondent au contrôle RTSP avec découverte automatique.
+Les tests de coupure/reconnexion et de dégradation provoquée restent à faire avec
+l'utilisateur. Le voyant indique la disponibilité du service, pas des images
+valides ni le rétablissement du lecteur (#9).
+
+Travail conservé dans une PR en brouillon ; aucune publication sur main.
