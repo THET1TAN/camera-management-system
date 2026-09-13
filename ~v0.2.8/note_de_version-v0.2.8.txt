@@ -7,7 +7,8 @@ Version de travail du 13 septembre 2026, à valider avant fusion.
   de ces deux contrôles. Une caméra joignable seulement par ping est Degraded.
 - Confirmation après deux échecs consécutifs ; récupération automatique.
 - Découverte ONVIF conservée en mémoire, ports personnalisables par caméra.
-- Détails et heures de vérification/changement accessibles au survol ou au focus.
+- Résumé compact de toutes les caméras sur une seule ligne en bas de la fenêtre.
+  Aucun diagnostic technique ni horodatage au survol. Libellé « Online » clarifié.
 - Surveillance isolée de Tk et arrêt borné, avec fermeture des processus enfants.
 - Rafraîchissement de la liste après fermeture de Camera Manager.
 

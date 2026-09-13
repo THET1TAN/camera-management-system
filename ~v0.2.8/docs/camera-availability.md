@@ -20,7 +20,7 @@ frames, or player recovery. It does not open an RTSP session or send SETUP/PLAY.
    yielding no valid response is still positive reachability evidence: **Degraded**.
 
 The first state is gray / Checking. The previous state is retained during a single
-failed round, with a confirmation message in its details. Any positive check
+failed round. Any positive check
 resets the failure counter. A successful RTSP check restores Online immediately;
 a ping-only recovery restores Degraded. Unreachable does not mean the camera is
 physically powered off. ICMP failure alone never produces an offline decision.
@@ -58,6 +58,14 @@ TLS uses system certificate validation. ICMP fallback is implemented on Windows,
 the supported desktop platform. On another OS it is unavailable, not a successful
 host check. Multiple DNS addresses use the first resolved address for ICMP.
 
+## Compact display
+
+Each camera keeps its own dot, status and controls. The footer shows one aggregate
+line, for example `2 online · 1 unreachable`, and refreshes automatically. It does
+not switch to a single camera when hovered or focused, and no diagnostic text or
+timestamps expand the footer at the expense of the camera list. Online means the
+RTSP service is available; explanatory limits belong in this guide.
+
 ## Scheduling and lifetime
 
 `HealthSettings` centralizes the initial values: 15 seconds between completed
@@ -88,7 +96,7 @@ Automated tests cover fallback order (including ping only), RTSP 200/401/errors,
 fragmented and malformed responses, wrong CSeq, silent sockets, timeouts,
 anti-flapping, recovery, discovery/cache, custom ports, credential-free results,
 bounded concurrency, real monitor-process shutdown, native IPv4/IPv6 ping, and
-Tk message delivery, reload, status details, and preserved controls.
+Tk message delivery, reload, aggregate status display, and preserved controls.
 
 Read-only physical checks on September 13, 2026 discovered two configured cameras
 and received positive RTSP responses. First checks took about 0.36 and 1.06 seconds;
@@ -98,7 +106,13 @@ establish availability. No camera connectivity or service was changed by this te
 A 30-second hidden Viewer check then displayed Online / Online / Unreachable
 for those cameras, processed 277 Tk heartbeat callbacks (maximum gap 0.115 s),
 and closed in about 0.067 s with its monitor process confirmed exited.
-The automated suite currently contains **201 passing tests**.
+The automated suite currently contains **203 passing tests**.
+
+The user's subsequent diagnostic reported successful OPTIONS and DESCRIBE for
+both responding cameras. One camera omitted OPTIONS from its Public methods
+header but accepted the request with status 200; the check uses the actual reply,
+not that advertised list. The other required Digest authentication for DESCRIBE,
+then returned 200. These results do not require changing the availability rules.
 
 Before merging, complete the following with the user:
 

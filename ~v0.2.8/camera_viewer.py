@@ -4,7 +4,6 @@ from cryptography.fernet import Fernet
 import tkinter as tk
 from tkinter import messagebox
 import sys
-import time
 from camera_health import CameraTarget, load_overrides
 from camera_health_monitor import HealthMonitor
 from child_processes import ChildProcesses, parent_lifetime
@@ -98,8 +97,7 @@ class CameraViewer:
         self.camera_list.grid(row=0, column=0, sticky="nsew")
         scrollbar.config(command=self.camera_list.yview)
 
-        self.status_detail = tk.Label(main_frame, text='Camera availability is checked automatically.',
-                                      anchor='w', justify=tk.LEFT, wraplength=430)
+        self.status_detail = tk.Label(main_frame, text='', height=1, anchor='w')
         self.status_detail.grid(row=2, column=0, sticky='ew', padx=8, pady=(0, 5))
         self.load_cameras()
         self.health_after = self.root.after(100, self._poll_health)
@@ -145,9 +143,6 @@ class CameraViewer:
                               bg=self.camera_list.cget('bg'), takefocus=True)
             status.pack(side=tk.LEFT, padx=(0, 4))
             self.health_widgets[camera[0]] = (indicator, dot, status)
-            for widget in (indicator, status):
-                widget.bind('<Enter>', lambda event, cid=camera[0]: self._show_health_detail(cid))
-                widget.bind('<FocusIn>', lambda event, cid=camera[0]: self._show_health_detail(cid))
             
             play_button = tk.Button(button_frame, text="Play", 
                                   command=lambda c=camera: self.play_camera_thread(c),
@@ -164,6 +159,7 @@ class CameraViewer:
             self.camera_list.insert(tk.END, "\n")
             
         self.camera_list.config(state=tk.DISABLED)
+        self._refresh_health_summary()
         if cameras:
             try:
                 overrides = load_overrides(os.path.dirname(__file__))
@@ -173,16 +169,18 @@ class CameraViewer:
                 self.children.processes.append(self.health)
             except Exception:
                 # Keep controls usable and never include sensitive exception text.
-                self.status_detail.config(text='Availability checks could not start. Check the local configuration.')
+                self.status_detail.config(text='Availability checks unavailable.')
                 for _, _, status in self.health_widgets.values():
                     status.config(text='Unknown')
 
-    def _show_health_detail(self, camera_id):
-        update = self.health_updates.get(camera_id)
-        if update is not None:
-            checked = time.strftime('%H:%M:%S', time.localtime(update.checked_at))
-            changed = time.strftime('%H:%M:%S', time.localtime(update.changed_at))
-            self.status_detail.config(text=f'Camera {camera_id}: {update.detail} Checked {checked}; state since {changed}.')
+    def _refresh_health_summary(self):
+        counts = {}
+        for _, _, label in self.health_widgets.values():
+            state = label.cget('text').lower()
+            counts[state] = counts.get(state, 0) + 1
+        parts = [f'{counts[state]} {state}' for state in
+                 ('online', 'degraded', 'unreachable', 'checking', 'unknown') if counts.get(state)]
+        self.status_detail.config(text=' · '.join(parts) if parts else 'No cameras configured.')
 
     def _poll_health(self):
         self.health_after = None
@@ -191,7 +189,8 @@ class CameraViewer:
         # Reap a replaced monitor even when the user has not launched a player.
         self.children._reap()
         if self.health is not None:
-            for update in self.health.updates():
+            updates = self.health.updates()
+            for update in updates:
                 if update.camera_id not in self.health_widgets:
                     continue
                 canvas, dot, label = self.health_widgets[update.camera_id]
@@ -202,12 +201,14 @@ class CameraViewer:
                 canvas.itemconfigure(dot, fill=color)
                 label.config(text=title)
                 self.health_updates[update.camera_id] = update
+            if updates:
+                self._refresh_health_summary()
             if self.health.poll() is not None:
                 for canvas, dot, label in self.health_widgets.values():
                     canvas.itemconfigure(dot, fill='#737373')
                     label.config(text='Unknown')
                 self.health_updates.clear()
-                self.status_detail.config(text='Availability checks stopped. Reopen the Viewer to restart them.')
+                self.status_detail.config(text='Availability checks stopped. Reopen Viewer.')
         closed_managers = [p for p in self.managers if p.poll() is not None]
         if closed_managers:
             self.managers = [p for p in self.managers if p not in closed_managers]

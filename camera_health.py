@@ -330,7 +330,7 @@ class CameraProbe:
         check_cancel(stop)
         if reply.code == 401 or (reply.code is not None and 200 <= reply.code < 300):
             self.rtsp_failures = 0
-            return Observation('online', 'RTSP responds; video playback and credentials are not verified.')
+            return Observation('online', 'RTSP service available.')
         self.rtsp_failures += 1
         if reply.code is not None:
             detail = 'Limited check: RTSP OPTIONS is not supported.' if reply.code in (405, 501) else f'RTSP reports error {reply.code}.'

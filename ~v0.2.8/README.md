@@ -13,8 +13,9 @@ Only if that fails, the monitor checks the configured HTTP/ONVIF port; only if
 that also fails, it pings the camera. Ping-only reachability is **Degraded**.
 Two consecutive unsuccessful rounds are needed for **Unreachable**.
 
-Hover or focus a status label for its reason and timestamps. Saved changes are
-reloaded after Camera Manager closes. Play, PTZ and child-window shutdown remain
+The footer shows one short summary for all cameras, such as `2 online · 1 unreachable`.
+It stays on one line and does not change when a camera is hovered or focused.
+Saved changes are reloaded after Camera Manager closes. Play, PTZ and child-window shutdown remain
 available. The availability monitor does not trigger player recovery (#9).
 
 See [availability behavior and configuration](docs/camera-availability.md) and
