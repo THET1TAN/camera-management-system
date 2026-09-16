@@ -2,8 +2,8 @@
 
 ## Current release: v0.2.8 — camera availability
 
-Released September 16, 2026. The user confirmed that the availability display
-works correctly and approved this version for `main` in
+Released September 16, 2026. This update introduces camera availability monitoring
+in Camera Viewer through
 [PR #11](https://github.com/THET1TAN/camera-management-system/pull/11), implementing
 [issue #10](https://github.com/THET1TAN/camera-management-system/issues/10).
 The root source files and [`~v0.2.8`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.8)
@@ -32,9 +32,9 @@ The version folders are source snapshots; private databases and keys are exclude
 
 ## PTZ behavior retained from v0.2.7 — r9 B
 
-Released in v0.2.7 on September 12, 2026. The user approved r9 B after testing partial
-key releases and simultaneous camera movement with optical zoom. Normal
-`camera_viewer.py` startup now selects this behavior without a test launcher.
+Released in v0.2.7 on September 12, 2026. The r9 B controller handles partial key
+releases and simultaneous camera movement with optical zoom.
+Normal `camera_viewer.py` startup selects this behavior without a test launcher.
 
 **Known limitation:** a short pause remains when releasing one axis of a diagonal.
 This release preserves the tested behavior; it does not claim to eliminate that
@@ -121,8 +121,8 @@ Stop without waiting for this timeout. An absence of keyboard updates for
 the camera, the last accepted movement may continue until the camera timeout.
 
 The default controller sends a whole neutral ContinuousMove before reapplying the
-latest held axes on partial release or reversal. The initial user test confirms
-correct releases and simultaneous zoom, with a remaining pause. The previous
+latest held axes on partial release or reversal. Camera testing verified correct
+releases and simultaneous zoom, with a remaining pause. The previous
 direct and Stop/resume modes are retained only for comparison; see the test guide.
 
 ### Window ownership
@@ -167,9 +167,9 @@ python -m unittest discover -s tests
 
 The v0.2.8 suite contains **203 passing tests**, covering availability checks,
 real local RTSP sockets, the compact status summary, monitor-process shutdown,
-and the inherited keyboard/PTZ and child-window regressions. Read-only checks
-against two physical cameras confirmed RTSP availability; the user also confirmed
-the final Viewer display works correctly.
+and the inherited keyboard/PTZ and child-window regressions. We verified RTSP
+availability on two physical cameras and checked the final availability display
+in Camera Viewer.
 
 The availability guide records the completed checks and additional physical
 outage/recovery scenarios that have not been individually documented. The release
