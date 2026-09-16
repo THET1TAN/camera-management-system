@@ -1,5 +1,6 @@
-v0.2.8-preview — Indicateurs de disponibilité des caméras (issue #10)
-Version de travail du 13 septembre 2026, à valider avant fusion.
+v0.2.8 — Indicateurs de disponibilité des caméras (issue #10)
+Version figée le 16 septembre 2026, après confirmation du bon fonctionnement
+par l'utilisateur et son accord pour l'intégration dans main (PR #11).
 
 - Pastille et texte Online / Degraded / Unreachable / Checking dans Camera Viewer.
 - RTSP OPTIONS sans lecture vidéo ni authentification RTSP.
@@ -12,14 +13,17 @@ Version de travail du 13 septembre 2026, à valider avant fusion.
 - Surveillance isolée de Tk et arrêt borné, avec fermeture des processus enfants.
 - Rafraîchissement de la liste après fermeture de Camera Manager.
 
-La racine et ~v0.2.8 contiennent les mêmes sources de travail.
+La racine et ~v0.2.8 contiennent les mêmes sources figées de cette version.
 ~v0.2.7 conserve intégralement la version précédente (40 fichiers vérifiés).
 Les bases, clés privées et configurations locales ne font pas partie des snapshots
 publiés. Le comportement PTZ reste celui de la v0.2.7 r9 B.
 
-Deux caméras physiques répondent au contrôle RTSP avec découverte automatique.
-Les tests de coupure/reconnexion et de dégradation provoquée restent à faire avec
-l'utilisateur. Le voyant indique la disponibilité du service, pas des images
-valides ni le rétablissement du lecteur (#9).
+Validation : 203 tests automatisés passent. Deux caméras physiques répondent au
+contrôle RTSP avec découverte automatique. L'utilisateur a confirmé le bon
+fonctionnement de l'affichage final. Les scénarios détaillés de coupure/reconnexion
+et de dégradation provoquée restent documentés comme essais complémentaires,
+sans supposer qu'ils ont tous été réalisés. Le voyant indique la disponibilité
+du service, pas des images valides ni le rétablissement du lecteur (#9).
 
-Travail conservé dans une PR en brouillon ; aucune publication sur main.
+Intégration dans main par la PR #11. Aucun nouvel exécutable n'est fourni ;
+utiliser les sources Python de cette version.

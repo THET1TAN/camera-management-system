@@ -1,11 +1,13 @@
 # Camera Management System
 
-## Working preview: v0.2.8 — camera availability (issue #10)
+## Current release: v0.2.8 — camera availability
 
-The root source files and `~v0.2.8/` contain the same development preview.
-`~v0.2.7/` preserves the complete previous release. This work is proposed in a
-draft PR; v0.2.8 is not a published release and physical outage/recovery tests
-are still pending.
+Released September 16, 2026. The user confirmed that the availability display
+works correctly and approved this version for `main` in
+[PR #11](https://github.com/THET1TAN/camera-management-system/pull/11), implementing
+[issue #10](https://github.com/THET1TAN/camera-management-system/issues/10).
+The root source files and [`~v0.2.8`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.8)
+contain the same release. `~v0.2.7/` preserves the complete previous version.
 
 Camera Viewer now displays a colored dot and text beside each camera. A small
 RTSP `OPTIONS` request checks whether the service responds, without opening video.
@@ -15,17 +17,22 @@ Two consecutive unsuccessful rounds are needed for **Unreachable**.
 
 The footer shows one short summary for all cameras, such as `2 online · 1 unreachable`.
 It stays on one line and does not change when a camera is hovered or focused.
-Saved changes are reloaded after Camera Manager closes. Play, PTZ and child-window shutdown remain
-available. The availability monitor does not trigger player recovery (#9).
+Saved changes are reloaded after Camera Manager closes. Play, PTZ and child-window
+shutdown remain available. The availability monitor does not trigger player
+recovery (#9).
+
+The indicator reports service reachability, not successful image decoding or
+valid RTSP credentials. For a custom ONVIF port or RTSP address, use the optional
+`camera_health.json` configuration described in the availability guide.
 
 See [availability behavior and configuration](docs/camera-availability.md) and
-[preview notes](note_de_version-v0.2.8.txt). Launch `python camera_viewer.py` from
-the active application directory to try the preview with its existing database.
+[v0.2.8 release notes](note_de_version-v0.2.8.txt). Launch `python camera_viewer.py`
+from the active application directory with its existing database.
 The version folders are source snapshots; private databases and keys are excluded.
 
-## Current release: v0.2.7 — PTZ r9 B
+## PTZ behavior retained from v0.2.7 — r9 B
 
-Released September 12, 2026. The user approved r9 B for main after testing partial
+Released in v0.2.7 on September 12, 2026. The user approved r9 B after testing partial
 key releases and simultaneous camera movement with optical zoom. Normal
 `camera_viewer.py` startup now selects this behavior without a test launcher.
 
@@ -133,7 +140,7 @@ when backing up or moving an installation. These local files are excluded from
 GitHub and the source snapshot.
 
 The application reads the key beside its scripts, or from `CAMERA_ENCRYPTION_KEY`
-if that environment variable is set. A source snapshot named `~v0.2.7` can also
+if that environment variable is set. A source snapshot such as `~v0.2.8` can also
 read the key in its parent application folder.
 
 When upgrading an older installation that embedded its key in the source, save
@@ -158,16 +165,16 @@ text to the PTZ interface, and a log failure cannot prevent Stop.
 python -m unittest discover -s tests
 ```
 
-The v0.2.7 suite contains **162 passing tests**, including latest input during slow
-responses, neutral transitions, native renewals, keyboard release recovery and
-child shutdown. Real ONVIF/Zeep/Requests serialization and hidden Tk startup were
-also checked. Normal startup selecting B without test settings and legacy C fallback are also
-covered. Archived C simulations do not validate C physically. The tests do not
-establish long-term physical reliability.
+The v0.2.8 suite contains **203 passing tests**, covering availability checks,
+real local RTSP sockets, the compact status summary, monitor-process shutdown,
+and the inherited keyboard/PTZ and child-window regressions. Read-only checks
+against two physical cameras confirmed RTSP availability; the user also confirmed
+the final Viewer display works correctly.
 
-The v0.2.8 preview adds availability checks to this suite, including real local
-RTSP sockets, monitor-process shutdown and Tk status updates. Physical outage
-and recovery validation remains listed in the availability test guide.
+The availability guide records the completed checks and additional physical
+outage/recovery scenarios that have not been individually documented. The release
+does not claim universal camera compatibility or long-term physical reliability.
+Archived C simulations do not validate C physically.
 
 ## Source layout
 
@@ -185,7 +192,8 @@ and recovery validation remains listed in the availability test guide.
 | `camera_key.py` | Local encryption key loading |
 | `ptz_diagnostics.py` | Bounded command and serialized-velocity logs |
 | `tests/` | Automated regression tests |
-| `~v0.2.7/` | Source snapshot matching the current release |
+| `~v0.2.8/` | Source snapshot matching the current release |
+| `~v0.2.7/` | Preserved previous release with PTZ r9 B |
 | `~v0.2.6/` | Withdrawn historical r8 source snapshot |
 
 ## Contributing and support

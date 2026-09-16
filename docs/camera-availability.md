@@ -1,4 +1,4 @@
-# Camera availability — v0.2.8 preview / issue #10
+# Camera availability — v0.2.8 / issue #10
 
 The indicator reports service reachability, not successful playback, valid video
 frames, or player recovery. It does not open an RTSP session or send SETUP/PLAY.
@@ -114,9 +114,12 @@ header but accepted the request with status 200; the check uses the actual reply
 not that advertised list. The other required Digest authentication for DESCRIBE,
 then returned 200. These results do not require changing the availability rules.
 
-Before merging, complete the following with the user:
+On September 16, 2026, the user confirmed the final display works correctly and
+approved freezing v0.2.8 and merging PR #11 into main. The following checklist
+distinguishes that confirmation from additional physical scenarios that have
+not been individually documented; they are retained for future regression work.
 
-- [ ] Confirm the actual Viewer display with the user's normal Python/VLC setup.
+- [x] User confirmed the actual Viewer display works correctly and approved v0.2.8.
 - [ ] Disconnect a working camera; verify confirmation and Unreachable while other
       cameras and controls stay responsive.
 - [ ] Reconnect it; verify automatic Online recovery.

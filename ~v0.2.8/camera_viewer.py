@@ -266,7 +266,7 @@ if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
     root = tk.Tk()
-    root.title("Camera Viewer - v0.2.8 preview")
+    root.title("Camera Viewer - v0.2.8")
     root.geometry("470x290")
     app = CameraViewer(root)
     root.mainloop()
