@@ -91,6 +91,13 @@ class ChildProcessesTests(unittest.TestCase):
         self.root.after.call_args.args[1]()
         close.assert_not_called()
 
+    def test_video_output_is_drained_and_relayed_without_using_parent_stdin(self):
+        with patch('player_diagnostics.terminal_relay') as relay:
+            stream = io.BytesIO(b'[Player 1] state STARTING->PLAYING\n')
+            ChildProcesses._relay(stream)
+            relay.return_value.put.assert_called_once_with('[Player 1] state STARTING->PLAYING')
+            self.assertTrue(stream.closed)
+
 
 class ProcessIntegrationTests(unittest.TestCase):
     def run_helper(self, code, *args):
@@ -212,6 +219,7 @@ class WindowOwnershipTests(unittest.TestCase):
                 child = Mock()
                 child.poll.return_value = None
                 child.stdin = io.BytesIO()
+                child.stdout = io.BytesIO()
                 processes.append(child)
                 return child
 

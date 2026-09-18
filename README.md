@@ -1,13 +1,27 @@
 # Camera Management System
 
+## In development: nonblocking direct-player recovery (#9)
+
+The root development sources isolate each VLC session in a supervised process,
+keep Tk responsive during RTSP failures, and restore playback automatically with
+bounded retries. ONVIF discovery preserves the actual URI and profile across
+brands; no Hikvision path or camera codec is forced. PTZ r9 B and the v0.2.8
+availability monitor are preserved. This work is awaiting Joël's validation and
+is not a new approved release.
+
+See [architecture, diagnostics and reproducible tests](docs/player-recovery.md)
+and [validation results and remaining limits](docs/player-recovery-results.md).
+The released v0.2.8 source snapshot remains unchanged.
+
 ## Current release: v0.2.8 — camera availability
 
 Released September 16, 2026. This update introduces camera availability monitoring
 in Camera Viewer through
 [PR #11](https://github.com/THET1TAN/camera-management-system/pull/11), implementing
 [issue #10](https://github.com/THET1TAN/camera-management-system/issues/10).
-The root source files and [`~v0.2.8`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.8)
-contain the same release. `~v0.2.7/` preserves the complete previous version.
+[`~v0.2.8`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.8)
+preserves that release. Root sources include the development changes described
+above. `~v0.2.7/` preserves the complete previous version.
 
 Camera Viewer now displays a colored dot and text beside each camera. A small
 RTSP `OPTIONS` request checks whether the service responds, without opening video.
@@ -185,6 +199,9 @@ Archived C simulations do not validate C physically.
 | `camera_health_monitor.py` | Bounded background supervision and status messages |
 | `camera_manager.py` | Add, edit and remove camera configurations |
 | `player_vilkin_hikvision.py` | VLC video player and ONVIF stream discovery |
+| `player_supervisor.py` | Nonblocking player state and bounded session-process replacement |
+| `player_worker.py` | Generic ONVIF discovery and one serialized libVLC session |
+| `player_diagnostics.py` | Rotating logs, bounded terminal relay and optional stack capture |
 | `ptz_keyboard_control.py` | PTZ window and physical key tracking |
 | `ptz_command_worker.py` | Latest-state ONVIF commands and stops |
 | `ptz_velocity.py` | Advertised velocity spaces and speed scaling |

@@ -235,10 +235,11 @@ class CameraViewer:
             
         self.children.spawn([python_exe,
                                   os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py'),
+                                  '--',  # Credentials beginning with '-' are still positional values.
                                   str(camera[0]),
                                   camera[1],
                                   camera[2],
-                                  decrypted_password])
+                                  decrypted_password], relay_output=True)
 
     def play_ptz_thread(self, camera):
         python_exe = get_current_python()

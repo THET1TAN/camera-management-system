@@ -66,17 +66,38 @@ class ChildProcesses:
                 self._close_pipe(process)
         self.processes = alive
 
-    def spawn(self, command):
+    def spawn(self, command, *, relay_output=False):
         if self.closing:
             return None
         self._reap()
         env = os.environ.copy()
         env[PARENT_PIPE_ENV] = '1'
+        if relay_output:
+            env['PYTHONUNBUFFERED'] = '1'
+        output = {'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT} if relay_output else {}
         process = subprocess.Popen(
             command, stdin=subprocess.PIPE, env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0, **output)
         self.processes.append(process)
+        if relay_output:
+            threading.Thread(target=self._relay, args=(process.stdout,),
+                             name='Player output drain', daemon=True).start()
         return process
+
+    @staticmethod
+    def _relay(stream):
+        from player_diagnostics import terminal_relay
+        relay = terminal_relay()
+        try:
+            while True:
+                line = stream.readline(2048)
+                if not line:
+                    break
+                relay.put(line.decode('utf-8', errors='replace').rstrip())
+        except (OSError, ValueError):
+            pass
+        finally:
+            stream.close()
 
     def close(self):
         if self.closing:

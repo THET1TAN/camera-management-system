@@ -38,6 +38,7 @@ camera_credentials.db
 camera_health.json
 vlc-log.txt
 *.log
+player-logs/
 
 # OS specific
 .DS_Store

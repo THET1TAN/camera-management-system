@@ -385,10 +385,11 @@ class CameraApp:
         decrypted_password = cipher.decrypt(camera[3]).decode()
         self.children.spawn([python_exe,
                                   os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py'),
+                                  '--',  # Do not parse camera credentials as command-line options.
                                   str(camera[0]),  # ID de la caméra en premier argument
                                   camera[1],       # Adresse IP
                                   camera[2],       # Username
-                                  decrypted_password])
+                                  decrypted_password], relay_output=True)
 
     def play_ptz_thread(self, camera):
         python_exe = get_current_python()
