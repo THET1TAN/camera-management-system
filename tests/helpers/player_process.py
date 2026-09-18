@@ -19,6 +19,9 @@ def emit(kind, **values):
 def commands():
     for line in sys.stdin.buffer:
         message = json.loads(line)
+        if config.get('audio_probe') and 'muted' in message:
+            with Path(config['audio_probe']).open('a') as output:
+                output.write(json.dumps(dict(generation=generation, **message))+'\n')
         emit('audio-observed', **message)
     if config.get('block_stop'):
         emit('operation', name='stop', phase='enter')

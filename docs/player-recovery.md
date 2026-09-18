@@ -11,6 +11,13 @@ thread. The window stays available, covers the previous image with an unavailabl
 status, and retries automatically. Mute, volume and the existing window survive
 replacement of the media session. There are no repeated modal dialogs.
 
+The audio control retains v0.2.8's speaker and crossed-speaker icons, 30 px
+button with a 16 px symbol, pressed appearance while muted, and `(Muted)` title
+suffix. One click mutes, another restores sound; mute stays selected across
+reconnection. The temporary text button and volume slider have been removed.
+Tk reads the existing PNG assets directly. The click only changes the supervisor's
+requested audio state; all native audio calls still run in the media process.
+
 The historical filename `player_vilkin_hikvision.py` remains a compatible launch
 entry point; its implementation is generic ONVIF/RTSP. It keeps the first ONVIF
 media profile and the **complete discovered URI**, including a nonstandard host,

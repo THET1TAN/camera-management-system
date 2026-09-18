@@ -250,13 +250,32 @@ class ProcessRecoveryTests(unittest.TestCase):
         self.assertEqual(healthy.snapshot.generation, 1)
 
     def test_mute_and_volume_are_applied_to_the_replacement_process(self):
+        from player_vilkin_hikvision import VideoPlayer
         path = Path(self.directory.name) / 'audio.jsonl'
         owner = self.owner({'fail_first': True, 'audio_probe': str(path)})
-        self.wait_for(lambda: owner.snapshot.state == 'PLAYING')
-        owner.set_audio(True, 42)
-        self.wait_for(lambda: owner.snapshot.generation == 2 and owner.snapshot.state == 'PLAYING')
-        records = [json.loads(line) for line in path.read_text().splitlines()]
-        self.assertEqual(records[-1], {'generation': 2, 'muted': True, 'volume': 42})
+        app = VideoPlayer('mute-test', supervisor_factory=lambda *args: owner)
+        app.root.withdraw()
+        try:
+            self.wait_for(lambda: owner.snapshot.state == 'PLAYING')
+            app.set_volume(42)
+            app.mute_button.invoke()
+            self.wait_for(lambda: owner.snapshot.generation == 2 and owner.snapshot.state == 'PLAYING')
+            app.root.update()
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(records[-1], {'generation': 2, 'muted': True, 'volume': 42})
+            self.assertEqual(app.mute_button.cget('image'), str(app.volume_mute_icon))
+            self.assertEqual(app.mute_button.cget('relief'), 'sunken')
+            self.assertEqual(app.root.title(), 'Camera mute-test (Muted)')
+            app.mute_button.invoke()
+            # Only consume complete lines while the worker appends observations.
+            self.wait_for(lambda: json.loads(path.read_text().split('\n')[-2])['muted'] is False)
+            self.assertEqual(app.mute_button.cget('image'), str(app.volume_up_icon))
+            self.assertEqual(app.mute_button.cget('relief'), 'flat')
+            self.assertEqual(app.root.title(), 'Camera mute-test')
+            self.assertEqual(owner._audio, (False, 42))
+        finally:
+            app.on_closing()
+            app.root.mainloop()
 
     def test_viewer_pipe_eof_closes_real_player_window_and_its_blocked_worker(self):
         code = """
@@ -310,7 +329,7 @@ print('reaped', flush=True)
             beats.append(time.monotonic())
             app.root.after(10, beat)
         app.root.after(10, beat)
-        app.root.after(300, app.toggle_mute)
+        app.root.after(300, app.mute_button.invoke)
         app.root.after(400, app.on_closing)
         app.root.after(5000, app.on_closing)
         app.run()

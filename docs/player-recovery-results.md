@@ -14,6 +14,13 @@ After limiting unbuffered-output changes to video children, the 12 child-process
 regressions also passed (0.808 seconds). `git diff --check` passed. PTZ engine,
 availability sources and all historical snapshots have zero diff from the base.
 
+After restoring v0.2.8's icon-only mute button and removing the temporary volume
+slider, all **227 tests passed again in 11.709 seconds**. The existing recovery
+regression now clicks the real Tk button, observes mute in the replacement
+process, checks that its icon/pressed state/title remain selected, then clicks
+again and observes unmute. The Tk responsiveness test also uses the actual button.
+These checks do not claim a physical listening test; the native audio owner is unchanged.
+
 The final native run completed **20/20 cycles**, alternating TCP disconnect/refusal
 and open-socket RTP silence, including outages of **5, 30 and 120 seconds** and an
 initially unavailable source. Every cycle had advancing audio buffers and a

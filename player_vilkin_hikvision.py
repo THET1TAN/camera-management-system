@@ -35,13 +35,19 @@ class VideoPlayer:
         self.status_label.lift()
         self.control_bar = tk.Frame(self.root, bg='#2b2b2b', height=self.CONTROL_BAR_HEIGHT)
         self.control_bar.pack(fill=tk.X, side=tk.BOTTOM)
-        self.mute_button = tk.Button(self.control_bar, text='Mute', command=self.toggle_mute)
+        # Keep v0.2.8's speaker/mute symbols and latched button appearance.
+        # The existing 32 px PNGs scale to 16 px using Tk, without an extra dependency.
+        icon_directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'icons')
+        self.volume_up_icon = tk.PhotoImage(master=self.root,
+            file=os.path.join(icon_directory, 'volume-up.png')).subsample(2, 2)
+        self.volume_mute_icon = tk.PhotoImage(master=self.root,
+            file=os.path.join(icon_directory, 'volume-mute.png')).subsample(2, 2)
+        self.mute_button = tk.Button(self.control_bar, image=self.volume_up_icon,
+            command=self.toggle_mute, width=30, height=30, relief='flat', bg='#C0C0C0',
+            activebackground='#D0D0D0', bd=0, highlightthickness=0)
         self.mute_button.pack(side=tk.LEFT, padx=5, pady=5)
-        self.volume_control = tk.Scale(self.control_bar, from_=0, to=100, orient=tk.HORIZONTAL,
-            showvalue=False, label='', length=100, command=self.set_volume)
-        self.volume_control.set(self.volume)
-        self.volume_control.pack(side=tk.LEFT)
-        self.bitrate_label = tk.Label(self.control_bar, text='-- Mbps', fg='white', bg='#2b2b2b')
+        self.bitrate_label = tk.Label(self.control_bar, text='-- Mbps', fg='white',
+            bg='#2b2b2b', font=('Arial', 9))
         self.bitrate_label.pack(side=tk.RIGHT, padx=10)
         self.root.update_idletasks()
         # This is the only HWND lookup. It runs on the Tk thread, before the
@@ -67,7 +73,11 @@ class VideoPlayer:
             return
         self.is_muted = not self.is_muted
         self.supervisor.set_audio(self.is_muted, self.volume)
-        self.mute_button.config(text='Unmute' if self.is_muted else 'Mute')
+        self.mute_button.config(
+            image=self.volume_mute_icon if self.is_muted else self.volume_up_icon,
+            relief='sunken' if self.is_muted else 'flat',
+            bg='#E0E0E0' if self.is_muted else '#C0C0C0',
+            activebackground='#F0F0F0' if self.is_muted else '#D0D0D0')
         self.root.title(self.base_title + (' (Muted)' if self.is_muted else ''))
 
     def set_volume(self, value):
