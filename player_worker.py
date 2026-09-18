@@ -9,6 +9,15 @@ import time
 from urllib.parse import quote, urlsplit, urlunsplit
 from xml.sax.saxutils import escape
 from player_diagnostics import StackCapture
+from player_metrics import BitrateAverage
+
+
+# Preserve v0.2.8's playback/latency settings. Diagnostics replace file logging,
+# and title overlays stay disabled so an authenticated URI cannot appear on screen.
+VLC_OPTIONS = ('--no-video-deco', '--no-embedded-video', '--rtsp-tcp',
+               '--network-caching=50', '--file-caching=50', '--live-caching=50',
+               '--no-skip-frames', '--drop-late-frames', '--avcodec-threads=2',
+               '--sout-mux-caching=0', '--no-video-title-show', '--verbose=-1')
 
 
 def authenticated_uri(uri, username, password):
@@ -28,6 +37,18 @@ def discover_uri(config, stop, request=None):
         return authenticated_uri(config['uri'], config.get('username', ''), config.get('password', ''))
     request = request or soap_request
     target = CameraTarget(0, config['host'], config.get('username', ''), config.get('password', ''))
+    if target.host.startswith(('http://', 'https://')):
+        # ONVIFCamera(host, 80, ...) accepted scheme-prefixed addresses in v0.2.8.
+        # Do not send them through device_url's bare-IP / IPv6 path.
+        endpoint = urlsplit(target.host)
+        if not endpoint.hostname or endpoint.username is not None or endpoint.path not in ('', '/') or endpoint.query or endpoint.fragment:
+            raise ValueError('Invalid camera service address')
+        host = f'[{endpoint.hostname}]' if ':' in endpoint.hostname else endpoint.hostname
+        port = endpoint.port if endpoint.port is not None else 80
+        if not 1 <= port <= 65535:
+            raise ValueError('Invalid camera service port')
+        service_url = f'{endpoint.scheme}://{host}:{port}/onvif/device_service'
+        target = CameraTarget(0, endpoint.hostname, target.username, target.password, onvif_url=service_url)
     caps = request(device_url(target), target, DEVICE + '/GetCapabilities',
         f'<tds:GetCapabilities xmlns:tds="{DEVICE}"><tds:Category>Media</tds:Category></tds:GetCapabilities>', 2., stop)
     media_url = caps.findtext(f'.//{{{SCHEMA}}}Media/{{{SCHEMA}}}XAddr')
@@ -122,8 +143,7 @@ def run(config, commands, vlc_module=None, emit=None):
         emit({'kind': 'runtime', 'python': sys.version.split()[0], 'bits': struct.calcsize('P')*8,
               'python_vlc': vlc.__version__, 'libvlc': vlc.libvlc_get_version().decode(errors='replace'),
               'dll': str(vlc.dll._name)})
-        instance = call('create', vlc.Instance, '--rtsp-tcp', '--network-caching=300',
-                        '--no-video-title-show', '--avcodec-threads=2', '--verbose=-1')
+        instance = call('create', vlc.Instance, *VLC_OPTIONS)
         # Do not format/retain arbitrary native messages: they can contain secrets.
         @vlc.CallbackDecorators.LogCb
         def native_log(_data, _level, _ctx, fmt, _args):
@@ -147,7 +167,8 @@ def run(config, commands, vlc_module=None, emit=None):
             emit({'kind': 'failure', 'reason': 'vlc-error'})
             return
         audio = None
-        previous_bytes, previous_time = 0, time.monotonic()
+        previous_bytes = 0
+        bitrate = BitrateAverage()
         while not commands.stop.is_set():
             for _ in range(32):
                 try:
@@ -168,8 +189,8 @@ def run(config, commands, vlc_module=None, emit=None):
             width, height = call('stats', player.video_get_size, 0)
             now = time.monotonic()
             received = stats.demux_read_bytes if valid else previous_bytes
-            rate = max(0, received - previous_bytes) * 8 / max(.001, now-previous_time) / 1_000_000
-            previous_bytes, previous_time = received, now
+            rate = bitrate.observe(now, stats.demux_read_bytes if valid else None)
+            previous_bytes = received
             emit({'kind': 'sample', 'received': received, 'decoded': stats.decoded_video if valid else 0,
                   'displayed': stats.displayed_pictures if valid else 0, 'audio': stats.played_abuffers if valid else 0,
                   'bitrate': rate, 'width': width, 'height': height})

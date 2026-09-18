@@ -24,6 +24,7 @@ class VideoPlayer:
         self.volume = 100
         self._sized = False
         self._timer = None
+        self._bitrate_timer = None
         self.frame = tk.Frame(self.root, bg='black')
         self.frame.pack(fill=tk.BOTH, expand=True)
         # Keep a sized, mapped HWND throughout its native session. A full-size
@@ -67,6 +68,7 @@ class VideoPlayer:
         self._dumps = StackCapture(camera_id, 'tk')
         self._dumps.arm()
         self._timer = self.root.after(100, self.check_stream_status)
+        self._bitrate_timer = self.root.after(1000, self.update_bitrate)
 
     def toggle_mute(self):
         if self.closing:
@@ -105,8 +107,17 @@ class VideoPlayer:
             self.status_label.config(text=text)
             self.status_label.place(x=0, y=0, relwidth=1, relheight=1)
             self.status_label.lift()
-        self.bitrate_label.config(text=f'{snapshot.bitrate:.2f} Mbps' if live else '-- Mbps')
+            self.bitrate_label.config(text='-- Mbps')
         self._timer = self.root.after(100, self.check_stream_status)
+
+    def update_bitrate(self):
+        self._bitrate_timer = None
+        if self.closing:
+            return
+        snapshot = self.supervisor.snapshot
+        self.bitrate_label.config(text=f'{snapshot.bitrate:.2f} Mbps'
+            if snapshot.state == 'PLAYING' and snapshot.bitrate > 0 else '-- Mbps')
+        self._bitrate_timer = self.root.after(1000, self.update_bitrate)
 
     def on_closing(self):
         if self.closing:
@@ -115,6 +126,9 @@ class VideoPlayer:
         if self._timer is not None:
             self.root.after_cancel(self._timer)
             self._timer = None
+        if self._bitrate_timer is not None:
+            self.root.after_cancel(self._bitrate_timer)
+            self._bitrate_timer = None
         self.root.withdraw()
         self.supervisor.close()
         self._finish_close()
@@ -145,6 +159,8 @@ def main():
     parser.add_argument('password', nargs='?', default=os.getenv('CAMERA_PASSWORD', ''))
     parser.add_argument('--test-uri', help='Local synthetic RTSP source (loopback only)')
     args = parser.parse_args()
+    if not args.camera_ip and not args.test_uri:
+        parser.error('camera_ip is required for normal camera playback')
     if args.test_uri:
         from urllib.parse import urlsplit
         parts = urlsplit(args.test_uri)

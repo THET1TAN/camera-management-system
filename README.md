@@ -11,6 +11,8 @@ is not a new approved release.
 
 See [architecture, diagnostics and reproducible tests](docs/player-recovery.md)
 and [validation results and remaining limits](docs/player-recovery-results.md).
+The [v0.2.8 compatibility audit](docs/player-compatibility-audit.md) documents the
+restored mute control, smoothed bitrate and playback defaults, with regression tests.
 The released v0.2.8 source snapshot remains unchanged.
 
 ## Current release: v0.2.8 — camera availability

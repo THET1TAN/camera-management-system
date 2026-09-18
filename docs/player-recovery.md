@@ -18,13 +18,25 @@ reconnection. The temporary text button and volume slider have been removed.
 Tk reads the existing PNG assets directly. The click only changes the supervisor's
 requested audio state; all native audio calls still run in the media process.
 
+Bitrate again displays the mean of the last five readings, sampled at least one
+second apart, with a separate one-second UI refresh. This is approximately five
+seconds of history under normal sampling, not a strict five-second time window.
+It retains two decimals, the previous 100 Mbps cap and `-- Mbps` for a zero or
+unavailable value. New sessions/counter resets establish a fresh baseline; missing
+stats expire after three seconds. The average never decides whether video is stuck.
+Playback caches and decoding options also retain v0.2.8's defaults, including
+the 50 ms network cache. See the [compatibility audit](player-compatibility-audit.md)
+for regressions found, corrections and intentional differences.
+
 The historical filename `player_vilkin_hikvision.py` remains a compatible launch
 entry point; its implementation is generic ONVIF/RTSP. It keeps the first ONVIF
 media profile and the **complete discovered URI**, including a nonstandard host,
 port, path and query. It percent-encodes credentials when adding missing userinfo;
 it never substitutes `/Streaming/Channels/101`. IPv6 authorities are retained.
 The change does not set a camera codec, alter camera settings or assume a brand.
-The existing direct launch still discovers ONVIF on port 80. Media1 ONVIF and the
+The existing direct launch still discovers ONVIF on port 80 for a bare address;
+`http://` / `https://` host forms are also preserved, with an explicit port honored
+when present (otherwise the legacy port 80). Media1 ONVIF and the
 installed VLC's codecs/RTSP support remain compatibility limits; not every ONVIF
 variant or proprietary camera extension has been tested.
 

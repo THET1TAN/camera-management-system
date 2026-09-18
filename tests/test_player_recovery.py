@@ -1,3 +1,4 @@
+import ast
 import io
 import gc
 import json
@@ -80,6 +81,12 @@ class ProgressTests(unittest.TestCase):
 
 
 class CallbackAndDiscoveryTests(unittest.TestCase):
+    def test_normal_launch_without_a_camera_address_keeps_the_legacy_argument_error(self):
+        result = subprocess.run([sys.executable, 'player_vilkin_hikvision.py', '1'],
+                                capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b'usage:', result.stderr)
+
     def test_argument_error_does_not_echo_a_credential_like_option(self):
         result = subprocess.run([sys.executable, 'player_vilkin_hikvision.py', '1', 'host',
                                  'user', '--PRIVATE_TEST_PASSWORD'], capture_output=True, timeout=5)
@@ -122,7 +129,8 @@ class CallbackAndDiscoveryTests(unittest.TestCase):
         instance = SimpleNamespace(media_player_new=native('player', player), media_new=native('media', media),
             log_set=lambda callback, _: callbacks.update(log=callback),
             log_unset=native('log_unset'), release=native('release-instance'))
-        vlc = SimpleNamespace(Instance=native('instance', instance), __version__='test',
+        create_instance = Mock(side_effect=native('instance', instance))
+        vlc = SimpleNamespace(Instance=create_instance, __version__='test',
             libvlc_get_version=lambda: b'test', dll=SimpleNamespace(_name='test'),
             CallbackDecorators=SimpleNamespace(LogCb=lambda fn: fn), EventType=SimpleNamespace(
                 MediaPlayerEncounteredError='error', MediaPlayerEndReached='ended', MediaPlayerESDeleted='es'))
@@ -132,6 +140,16 @@ class CallbackAndDiscoveryTests(unittest.TestCase):
                 calls.clear()
                 messages.clear()
                 run(config, commands, vlc, messages.append)
+                # Freeze the playback contract against the released source, not
+                # against a copy of the new implementation's option constant.
+                release = ast.parse((Path(__file__).resolve().parents[1] / '~v0.2.8' /
+                                     'player_vilkin_hikvision.py').read_text(encoding='utf-8'))
+                options = next(node.value for node in ast.walk(release) if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == 'vlc_params' for target in node.targets))
+                playback_options = {item.value for item in options.elts if isinstance(item, ast.Constant)
+                                    and not item.value.startswith(('--file-logging', '--log-verbose'))}
+                self.assertTrue(playback_options.issubset(create_instance.call_args.args))
+                self.assertIn('--network-caching=50', create_instance.call_args.args)
                 failures = [m for m in messages if m.get('kind') == 'failure']
                 self.assertEqual(len(failures), 1)
                 self.assertEqual(failures[0]['reason'], 'graphics-error' if mode == 'graphics' else 'vlc-error')
@@ -175,6 +193,30 @@ class CallbackAndDiscoveryTests(unittest.TestCase):
         self.assertEqual(uri, 'rtsp://user:pass@camera:8554/vendor?profile=main')
         self.assertIn('one&amp;two', request.call_args.args[3])
         self.assertEqual(request.call_args.args[4], 2.)
+
+    def test_scheme_prefixed_camera_addresses_keep_legacy_onvif_discovery(self):
+        from camera_health import SCHEMA, MEDIA
+        for host, endpoint in (
+                ('http://camera', 'http://camera:80/onvif/device_service'),
+                ('https://camera', 'https://camera:80/onvif/device_service'),
+                ('http://[::1]', 'http://[::1]:80/onvif/device_service'),
+                ('https://camera:8443/', 'https://camera:8443/onvif/device_service')):
+            with self.subTest(host=host):
+                replies = [
+                    ET.fromstring(f'<r xmlns:t="{SCHEMA}"><t:Media><t:XAddr>{endpoint}</t:XAddr></t:Media></r>'),
+                    ET.fromstring(f'<r xmlns:m="{MEDIA}"><m:Profiles token="main"/></r>'),
+                    ET.fromstring(f'<r xmlns:t="{SCHEMA}"><t:Uri>rtsp://camera:8554/custom</t:Uri></r>')]
+                request = Mock(side_effect=replies)
+                self.assertEqual(discover_uri({'host': host}, threading.Event(), request),
+                                 'rtsp://camera:8554/custom')
+                self.assertEqual(request.call_args_list[0].args[0], endpoint)
+
+    def test_invalid_camera_service_address_is_rejected_before_network_io(self):
+        for host in ('http://camera:0', 'https://user:secret@camera', 'http://camera/private?key=secret'):
+            request = Mock()
+            with self.subTest(host=host), self.assertRaises(ValueError):
+                discover_uri({'host': host}, threading.Event(), request)
+            request.assert_not_called()
 
 
 class ProcessRecoveryTests(unittest.TestCase):

@@ -8,6 +8,36 @@ Intel UHD Graphics / D3D11VA observed in native synthetic-source diagnostics,
 Intel driver 32.0.101.7085. An NVIDIA RTX 3060 Laptop GPU (driver 32.0.16.1060)
 is also installed; it is not claimed as a separately validated renderer.
 
+## Latest compatibility validation
+
+After the [v0.2.8 behavior audit](player-compatibility-audit.md), **241 tests pass
+in 13.058 seconds**, with no skips. This includes five-reading bitrate smoothing,
+its one-second UI refresh, startup/reset/missing-counter handling, legacy empty
+formatting, mute, resizing and missing-address validation. Playback parameters
+passed to VLC are compared with the frozen release; scheme-prefixed ONVIF
+addresses, explicit ports and IPv6 are checked without camera credentials.
+
+With the restored **50 ms** playback cache, the updated native bench passed
+**2/2 cycles** (5-second TCP interruption and 30-second open-socket silence).
+Both screen comparisons show a changing synthetic image; the witness remains
+generation 1. Recovery took **9.992 s / 6.552 s**, maximum Tk heartbeat gap was
+**0.360 s**, and shutdown/reaping took **0.293 s** with no remaining owned workers.
+Raw results: [compatibility rerun](validation/issue-9-compatibility.json).
+
+The first attempt with the restored options failed its changing-image check.
+Inspection found that the fixture waited a fixed 20 ms on receive before sending
+each 20 ms audio packet, allowing its RTP clock to drift behind wall time. Its
+receive timeout now respects the next packet deadline. The rerun above passed
+with all restored playback options. This fixes test-source pacing; it does not
+change camera settings or establish that all physical streams behave identically.
+
+`git diff --check` passes. PTZ, availability, key handling, assets and historical
+snapshots have no source diff from the base. The following 20-cycle measurements
+are retained as earlier evidence; they predate the restored playback defaults
+and must not be presented as a fresh 20-cycle run of this revision.
+
+## Earlier recovery validation
+
 The original baseline passed **203 tests** before changes. The updated full suite
 passed **227 tests in 11.795 seconds** under Python 3.14.6 with no skips reported.
 After limiting unbuffered-output changes to video children, the 12 child-process
@@ -21,13 +51,13 @@ process, checks that its icon/pressed state/title remain selected, then clicks
 again and observes unmute. The Tk responsiveness test also uses the actual button.
 These checks do not claim a physical listening test; the native audio owner is unchanged.
 
-The final native run completed **20/20 cycles**, alternating TCP disconnect/refusal
+The earlier native run completed **20/20 cycles**, alternating TCP disconnect/refusal
 and open-socket RTP silence, including outages of **5, 30 and 120 seconds** and an
 initially unavailable source. Every cycle had advancing audio buffers and a
 visibly changing synthetic image. All 20 screen comparisons passed; the witness
 kept its original session (generation 1). The test took 462.885 seconds.
 
-| Final measurement | Result |
+| Earlier 20-cycle measurement | Result |
 | --- | --- |
 | Source available → video/audio progress | **0.852–15.624 seconds**; 0/20 above the proposed 20-second target |
 | Largest measured Tk heartbeat gap | **0.342 seconds**, below the 1-second target |
@@ -61,7 +91,8 @@ repeated display of one old decoded frame from counting as recovery.
 | Sparse frames / pipeline failure categories | Deterministic clock/counter tests; 1 frame / 5 seconds remains healthy |
 | PTZ / availability / cascading close | Inherited regression suite; PTZ engine and availability sources unchanged |
 | Real Windows VLC / RTSP TCP | Local synthetic H.264 + PCMU; source absence at launch and live outage/recovery |
-| 20-cycle run | 20/20 on final recovery implementation; measurements and raw results above |
+| Earlier 20-cycle run | 20/20 before the compatibility restoration; measurements and raw results above |
+| Current compatibility rerun | 2/2 with restored playback options and deadline-paced fixture; results above |
 | Graphics device-removal recovery | Fixed log/event path and session replacement simulated; no real driver reset performed |
 | Physical camera / H.265+ / UDP | Not performed |
 | Audible sound recovery | Not listened to; automated evidence is advancing native audio output buffers while muted |

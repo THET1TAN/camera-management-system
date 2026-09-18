@@ -113,6 +113,11 @@ class RTSPFixture:
         try:
             while not self.stop.is_set() and self.mode != 'offline':
                 try:
+                    # Do not add a full 20 ms receive wait to every 20 ms audio
+                    # period: that drifts RTP timestamps behind wall time and
+                    # can make a correct 50 ms low-latency player drop frames.
+                    deadline = min(next_video, next_audio) if playing and self.mode == 'live' else time.monotonic() + .02
+                    client.settimeout(max(.001, min(.02, deadline - time.monotonic())))
                     data = client.recv(65536)
                     if not data:
                         break
