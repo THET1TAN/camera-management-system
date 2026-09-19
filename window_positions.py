@@ -105,7 +105,7 @@ class PositionStore:
         connection = sqlite3.connect(self.path, timeout=0.2)
         try:
             if connection.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
-                                  "AND name IN ('layout_state','window_positions')").fetchone()[0] == 2:
+                                  "AND name IN ('layout_state','window_positions','window_sizes')").fetchone()[0] == 3:
                 return connection
             with connection:
                 connection.execute('CREATE TABLE IF NOT EXISTS layout_state '
@@ -114,6 +114,11 @@ class PositionStore:
                 connection.execute('CREATE TABLE IF NOT EXISTS window_positions '
                                    '(camera_id TEXT PRIMARY KEY, screens TEXT NOT NULL, '
                                    'x INTEGER NOT NULL, y INTEGER NOT NULL)')
+                # Keep the old table writable by players opened before the update.
+                # Generation also invalidates sizes when an older viewer resets.
+                connection.execute('CREATE TABLE IF NOT EXISTS window_sizes '
+                                   '(camera_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, '
+                                   'screens TEXT NOT NULL, width INTEGER, height INTEGER)')
         except Exception:
             connection.close()
             raise
@@ -124,23 +129,31 @@ class PositionStore:
             # Both reads belong to one snapshot, also while another process resets.
             db.execute('BEGIN')
             generation = db.execute('SELECT generation FROM layout_state WHERE id=1').fetchone()[0]
-            row = db.execute('SELECT screens,x,y FROM window_positions WHERE camera_id=?',
-                             (str(camera_id),)).fetchone()
-            if row and not all(type(v) is int and abs(v) < 10_000_000 for v in row[1:]):
+            row = db.execute('SELECT p.screens,p.x,p.y,s.width,s.height FROM window_positions p '
+                             'LEFT JOIN window_sizes s ON s.camera_id=p.camera_id '
+                             'AND s.screens=p.screens AND s.generation=? WHERE p.camera_id=?',
+                             (generation, str(camera_id))).fetchone()
+            if row and not all(type(v) is int and abs(v) < 10_000_000 for v in row[1:3]):
                 row = None
+            if row and not all(type(v) is int and 0 < v < 10_000_000 for v in row[3:]):
+                row = (*row[:3], None, None)
             return generation, row
 
-    def save(self, camera_id, generation, signature, x, y):
+    def save(self, camera_id, generation, signature, x, y, width=None, height=None):
         with closing(self._connect()) as db, db:
             # Atomic compare-and-write: a pre-reset sample cannot reappear later.
             db.execute('INSERT OR REPLACE INTO window_positions '
                        'SELECT ?,?,?,? WHERE (SELECT generation FROM layout_state WHERE id=1)=?',
                        (str(camera_id), signature, x, y, generation))
+            db.execute('INSERT OR REPLACE INTO window_sizes '
+                       'SELECT ?,?,?,?,? WHERE (SELECT generation FROM layout_state WHERE id=1)=?',
+                       (str(camera_id), generation, signature, width, height, generation))
 
     def reset(self):
         with closing(self._connect()) as db, db:
             db.execute('UPDATE layout_state SET generation=generation+1 WHERE id=1')
             db.execute('DELETE FROM window_positions')
+            db.execute('DELETE FROM window_sizes')
 
 
 def reset_positions(path=None):
@@ -223,7 +236,7 @@ class PlacementWorker:
 
 
 class WindowPlacement:
-    """Sample normal window coordinates on Tk, hand only values to the worker."""
+    """Sample normal window geometry on Tk, hand only values to the worker."""
     def __init__(self, root, camera_id, *, path=None, screen_provider=windows_screens):
         self.root = root
         self.camera_id = str(camera_id)
@@ -250,8 +263,15 @@ class WindowPlacement:
         return visible_geometry(self.camera_id, position, size, self.screens,
                                 (border*2, title+border))
 
-    def _place(self, position):
-        geometry = self._fit(position, self._geometry()[:2])
+    def _place(self, placement):
+        position = placement[:2] if placement is not None else None
+        size = placement[2:] if placement is not None else (None, None)
+        if all(value is not None for value in size):
+            # A restored user size has priority over the first video's aspect ratio.
+            self.user_placed = True
+        else:
+            size = self._geometry()[:2]
+        geometry = self._fit(position, size)
         w, h, x, y = geometry
         # '+-1920' is an absolute negative origin. '-1920' anchors to the right.
         self.root.geometry(f'{w}x{h}+{x}+{y}')
@@ -270,8 +290,8 @@ class WindowPlacement:
             # Observe Windows Snap / manual resize without rewriting geometry.
             # Even a no-op wm geometry call can undo the shell's snapped state.
             self.user_placed = True
-            if self.token is not None and geometry[2:] != self.last[2:]:
-                self.worker.save(self.token, geometry[2:])
+            if self.token is not None:
+                self.worker.save(self.token, (*geometry[2:], *geometry[:2]))
             self.last = geometry
 
     def resize_for_video(self, width, height):
@@ -301,7 +321,8 @@ class WindowPlacement:
             if previous is None and self.user_placed:
                 # A slow initial disk/display query must not undo an early Snap.
                 if self.root.state() == 'normal':
-                    self.worker.save(self.token, self._geometry()[2:])
+                    geometry = self._geometry()
+                    self.worker.save(self.token, (*geometry[2:], *geometry[:2]))
             else:
                 if previous is not None and self.root.state() in ('iconic', 'zoomed'):
                     self.root.state('normal')

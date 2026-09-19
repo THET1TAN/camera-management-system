@@ -1,15 +1,15 @@
-# Camera window positions — issue #6
+# Camera window positions and sizes — issue #6
 
 Unreleased feature, based on v0.2.9 and `main` `c1b7b77` (including the corrected
 v0.2.9 release documentation). This change does not create a new release snapshot.
 
 ## Use
 
-- Move a video window and close it. Opening the same camera restores its position,
+- Move or resize a video window and close it. Opening the same camera restores its position and size,
   including after exiting and restarting Camera Viewer.
 - Positions belong to the camera's database ID, not its address or credentials.
-  Different cameras keep separate positions. If several windows show the same
-  camera, the last recorded move wins.
+  Different cameras keep separate positions and sizes. If several windows show the same
+  camera, the last recorded move or resize wins.
 - The layout includes each monitor's identity, bounds, usable work area and
   primary-screen status. Enumeration order does not matter. Negative coordinates
   on left/upper screens are supported.
@@ -24,15 +24,17 @@ v0.2.9 release documentation). This change does not create a new release snapsho
   If a window is moved, resized, snapped or maximized before the first video arrives,
   its chosen size takes priority over the automatic video aspect-ratio size.
   This also applies if the initial storage/display lookup has not finished yet.
-  Otherwise, ordinary initial video sizing still applies and is fitted to the
-  work area. Window size, Snap groups and maximized/minimized state are not
-  persisted across closing and reopening.
+  A restored size also takes priority, even if video arrives before the initial
+  storage lookup finishes. Without a recorded size, ordinary initial video sizing
+  still applies and is fitted to the work area. Snap groups and maximized/minimized
+  state are not persisted; reopening uses the last recorded normal-window geometry.
 
 Choose **Réinitialiser la position des fenêtres** below **Manage Cameras**.
-All recorded video positions are cleared and open players return to defaults,
+All recorded video positions and sizes are cleared and open players return to default positions,
 normally within 350 ms (250 ms background poll plus 100 ms Tk poll). Minimized
 or maximized players return to normal windows for reset or a topology change.
-New openings use defaults until the user moves a window again. Default placement
+Open players keep their current size, reduced if necessary to fit the work area.
+New openings use defaults until the user moves or resizes a window again. Default placement
 and a subsequent close do not recreate the deleted records. The action applies
 to video players from this installation, including standalone players or players
 opened through Camera Manager. It does not reposition PTZ or Manager windows.
@@ -40,7 +42,7 @@ opened through Camera Manager. It does not reposition PTZ or Manager windows.
 ## Local storage and failure handling
 
 `camera_window_positions.db` is created beside the active scripts. It contains
-only camera IDs, monitor-layout signatures and coordinates, plus a reset
+only camera IDs, monitor-layout signatures, coordinates and dimensions, plus a reset
 generation. It is ignored by Git, along with SQLite sidecars. It is independent
 of `camera_credentials.db`, `.camera_encryption.key` and `camera_health.json`.
 The reset button never edits those files or sends a command to a camera.
@@ -49,9 +51,16 @@ Tests or isolated installations can set `CAMERA_WINDOW_POSITIONS_FILE` to a
 different local database path. Its parent directory must already exist.
 This is optional; ordinary launchers require no changes.
 
+Existing position-only databases gain a separate size table automatically, without
+discarding coordinates. Already running older players can continue writing positions.
+Older reset actions also invalidate saved sizes through the shared generation.
+Old records without dimensions retain the initial video aspect-ratio sizing until
+the user moves or resizes the window with the updated player. Invalid dimensions
+are ignored without discarding otherwise valid coordinates.
+
 SQLite transactions preserve records from simultaneous players. Every write
 includes the generation it observed; reset atomically advances the generation
-and removes all positions. A pending write from before reset, including a closing
+and removes all positions and sizes. A pending write from before reset, including a closing
 player's final sample, cannot undo the reset. Windows check for display changes
 while open; positions are not just validated at launch.
 
@@ -65,7 +74,7 @@ Unavailable, locked or corrupt placement storage leaves video controls usable
 and uses visible defaults when no saved position can be read. A failed reset
 displays a retry message; it does not claim success or overwrite a corrupt file.
 Saving is retried while the window is open. A crash or persistent storage failure
-can lose the latest move. The usual parent/child shutdown contract still applies.
+can lose the latest move or resize. The usual parent/child shutdown contract still applies.
 
 Windows uses `EnumDisplayMonitors` and `GetMonitorInfoW` work areas in the same
 process DPI coordinate space as Tk; the feature does not change DPI awareness.
@@ -77,7 +86,7 @@ and [multiple-monitor coordinates](https://learn.microsoft.com/en-us/windows/win
 ## Validation
 
 On Windows / Python 3.14 / Tk 8.6, the original **246 tests pass** before the
-change. The updated suite has **289 passing tests**: 43 added cases cover storage
+change. The updated suite has **297 passing tests**: 51 added cases cover storage
 across a new Python process, simultaneous camera writers, reset generations and
 late writes, negative coordinates, monitor gaps, work areas, monitor removal and
 rearrangement, resized windows, minimized windows, storage failure, reset-button
@@ -85,9 +94,16 @@ feedback, final saves and child-process shutdown. Eight follow-up regressions
 cover passive observation of Snap/resize, a slow initial placement lookup,
 Snap immediately after restoration, reset of a snapped window, close after
 resize, and first-video arrival during placement, after Snap or maximization.
+Eight size-persistence cases cover resizing without moving, restoration before or
+after the first video, legacy database upgrade (including concurrent startup and
+older running writers/resetters), invalid dimensions, oversized restored windows,
+legacy aspect-ratio sizing and preservation of normal dimensions during maximization.
+The size-persistence follow-up passed all 297 tests in 28.630 seconds in the
+working checkout, with no skips.
 
 Real Tk tests move and reopen windows. A process integration test launches real
-`VideoPlayer` processes with simulated media, restarts a player, resets two open
+`VideoPlayer` processes with simulated media, resizes and restarts a player, checks
+that the restored 640 × 410 dimensions survive its first 1920 × 1080 video, resets two open
 players through the shared store, then closes their parent pipes. Both exit and
 leave the cleared positions empty. Existing recovery tests still cover EOF
 shutdown with a blocked media worker. The installed monitor API is also exercised.

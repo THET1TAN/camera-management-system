@@ -92,32 +92,71 @@ class StoreTests(unittest.TestCase):
     def test_independent_camera_ids_survive_store_reopen(self):
         self.store.save(1, 0, self.signature, -1500, -100)
         self.store.save(2, 0, self.signature, 300, 200)
-        self.assertEqual(PositionStore(self.path).read(1), (0, (self.signature, -1500, -100)))
-        self.assertEqual(PositionStore(self.path).read('2')[1][1:], (300, 200))
+        self.assertEqual(PositionStore(self.path).read(1), (0, (self.signature, -1500, -100, None, None)))
+        self.assertEqual(PositionStore(self.path).read('2')[1][1:3], (300, 200))
 
     def test_positions_survive_a_new_python_process(self):
-        self.store.save('one', 0, self.signature, -1500, -100)
+        self.store.save('one', 0, self.signature, -1500, -100, 640, 410)
         code = 'import json,sys; from window_positions import PositionStore; print(json.dumps(PositionStore(sys.argv[1]).read("one")))'
         result = subprocess.run([sys.executable, '-c', code, str(self.path)],
                                 capture_output=True, text=True, timeout=5, check=True)
-        self.assertEqual(json.loads(result.stdout), [0, [self.signature, -1500, -100]])
+        self.assertEqual(json.loads(result.stdout), [0, [self.signature, -1500, -100, 640, 410]])
 
     def test_simultaneous_writers_do_not_overwrite_other_cameras(self):
         self.store.read('init')
         with ThreadPoolExecutor(max_workers=4) as pool:
-            list(pool.map(lambda i: self.store.save(i, 0, self.signature, i*10, i*20), range(12)))
+            list(pool.map(lambda i: self.store.save(i, 0, self.signature, i*10, i*20, 500+i, 300+i), range(12)))
         for i in range(12):
-            self.assertEqual(self.store.read(i)[1][1:], (i*10, i*20))
+            self.assertEqual(self.store.read(i)[1][1:], (i*10, i*20, 500+i, 300+i))
 
     def test_reset_clears_every_camera_and_rejects_pre_reset_writes(self):
         for i in range(3):
-            self.store.save(i, 0, self.signature, 10, 20)
+            self.store.save(i, 0, self.signature, 10, 20, 640, 410)
         self.store.reset()
-        self.store.save(1, 0, self.signature, 500, 600)
+        self.store.save(1, 0, self.signature, 500, 600, 900, 700)
         for i in range(3):
             self.assertEqual(self.store.read(i), (1, None))
         self.store.save(1, 1, self.signature, 70, 80)
-        self.assertEqual(self.store.read(1)[1][1:], (70, 80))
+        self.assertEqual(self.store.read(1)[1][1:], (70, 80, None, None))
+
+    def test_invalid_size_keeps_valid_position_without_restoring_dimensions(self):
+        for size in [(0, 400), (400, -1), ('bad', 400), (400, 10**12), (None, 400)]:
+            with self.subTest(size=size):
+                self.store.save(1, 0, self.signature, 300, 200, *size)
+                self.assertEqual(self.store.read(1)[1], (self.signature, 300, 200, None, None))
+
+    def legacy_store(self):
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute('CREATE TABLE layout_state (id INTEGER PRIMARY KEY, generation INTEGER NOT NULL)')
+            db.execute('INSERT INTO layout_state VALUES (1, 3)')
+            db.execute('CREATE TABLE window_positions (camera_id TEXT PRIMARY KEY, screens TEXT NOT NULL, '
+                       'x INTEGER NOT NULL, y INTEGER NOT NULL)')
+            db.execute('INSERT INTO window_positions VALUES (?,?,?,?)', ('1', self.signature, 300, 200))
+
+    def test_upgrade_preserves_positions_and_remains_compatible_with_running_old_players(self):
+        self.legacy_store()
+        self.assertEqual(self.store.read(1), (3, (self.signature, 300, 200, None, None)))
+        self.store.save(1, 3, self.signature, 300, 200, 640, 410)
+        with closing(sqlite3.connect(self.path)) as db, db:
+            # Old players still use a four-column INSERT; an old viewer only resets positions.
+            db.execute('INSERT OR REPLACE INTO window_positions SELECT ?,?,?,? '
+                       'WHERE (SELECT generation FROM layout_state WHERE id=1)=?',
+                       ('1', self.signature, 350, 220, 3))
+        self.assertEqual(self.store.read(1)[1][1:], (350, 220, 640, 410))
+        with closing(sqlite3.connect(self.path)) as db, db:
+            db.execute('UPDATE layout_state SET generation=generation+1 WHERE id=1')
+            db.execute('DELETE FROM window_positions')
+            db.execute('INSERT INTO window_positions VALUES (?,?,?,?)', ('1', self.signature, 300, 200))
+        self.assertEqual(self.store.read(1), (4, (self.signature, 300, 200, None, None)))
+
+    def test_simultaneous_upgrade_keeps_legacy_records_and_new_camera_sizes(self):
+        self.legacy_store()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(lambda i: PositionStore(self.path).save(i, 3, self.signature, 300, 200, 600+i, 400+i),
+                          range(2, 6)))
+        self.assertEqual(self.store.read(1), (3, (self.signature, 300, 200, None, None)))
+        for i in range(2, 6):
+            self.assertEqual(self.store.read(i)[1][3:], (600+i, 400+i))
 
     def test_multiple_resets_advance_generation_even_without_positions(self):
         self.store.reset()
@@ -177,7 +216,7 @@ class PlacementWorkerTests(unittest.TestCase):
     def test_worker_restores_only_with_identical_screens(self):
         store = PositionStore(self.path)
         store.save(1, 0, screens_signature(SCREENS), -1500, -100)
-        self.assertEqual(self.update(self.worker())[2], (-1500, -100))
+        self.assertEqual(self.update(self.worker())[2], (-1500, -100, None, None))
         self.screens = (PRIMARY,)
         self.assertIsNone(self.update(self.worker())[2])
 
@@ -196,16 +235,16 @@ class PlacementWorkerTests(unittest.TestCase):
     def test_close_flushes_last_move_and_finishes_worker(self):
         worker = self.worker()
         token = self.update(worker)[0]
-        worker.save(token, (-1400, -50))
+        worker.save(token, (-1400, -50, 640, 410))
         worker.close()
         self.assertTrue(worker.closed.wait(2))
-        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (-1400, -50))
+        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (-1400, -50, 640, 410))
 
     def test_reset_racing_with_close_does_not_restore_stale_position(self):
         worker = self.worker()
         token = self.update(worker)[0]
         PositionStore(self.path).reset()
-        worker.save(token, (-1400, -50))
+        worker.save(token, (-1400, -50, 640, 410))
         worker.close()
         self.assertTrue(worker.closed.wait(2))
         self.assertEqual(PositionStore(self.path).read(1), (1, None))
@@ -290,6 +329,71 @@ class TkPlacementTests(unittest.TestCase):
         self.placement(other, '2')
         self.assertNotEqual((other.winfo_x(), other.winfo_y()), (350, 220))
 
+    def test_size_only_change_survives_close_reopen_and_first_video(self):
+        first = self.placement()
+        position = first._geometry()[2:]
+        self.root.geometry('640x410')
+        self.root.update()
+        self.assertEqual(first._geometry()[2:], position)
+        first.close()  # Capture a resize even before the next scheduled sample.
+        self.assertTrue(first.worker.closed.wait(2))
+        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (*position, 640, 410))
+        window = tk.Toplevel(self.root)
+        self.windows.append(window)
+        window.geometry('800x600'); window.update()
+        restored = self.placement(window)
+        with patch.object(window, 'geometry', wraps=window.geometry) as geometry:
+            restored.resize_for_video(800, 490)
+            geometry.assert_not_called()
+        self.assertEqual(restored._geometry(), (640, 410, *position))
+
+    def test_saved_size_wins_when_first_video_arrives_before_storage_lookup(self):
+        PositionStore(self.path).save(1, 0, screens_signature(SCREENS), 300, 200, 640, 410)
+        entered, release = threading.Event(), threading.Event()
+        def slow_screens():
+            entered.set()
+            release.wait(2)
+            return SCREENS
+        placement = WindowPlacement(self.root, '1', path=self.path, screen_provider=slow_screens)
+        self.placements.append(placement)
+        try:
+            self.assertTrue(entered.wait(1))
+            placement.resize_for_video(800, 490)
+            self.root.update()
+            self.assertEqual(placement._geometry()[:2], (800, 490))
+            release.set()
+            self.pump_until(lambda: placement.token is not None and not placement.settling)
+            self.assertEqual(placement._geometry(), (640, 410, 300, 200))
+        finally:
+            release.set()
+
+    def test_legacy_position_without_size_still_uses_initial_video_aspect_ratio(self):
+        PositionStore(self.path).save(1, 0, screens_signature(SCREENS), 300, 200)
+        placement = self.placement()
+        placement.resize_for_video(800, 490)
+        self.pump_until(lambda: not placement.settling)
+        self.assertEqual(placement._geometry(), (800, 490, 300, 200))
+        self.assertFalse(placement.user_placed)
+
+    def test_restored_oversized_window_is_fitted_and_not_resized_by_video(self):
+        PositionStore(self.path).save(1, 0, screens_signature(SCREENS), 300, 200, 4000, 3000)
+        placement = self.placement()
+        restored = placement._geometry()
+        self.assertLessEqual(self.root.winfo_rootx()+self.root.winfo_width(), 1920)
+        self.assertLessEqual(self.root.winfo_rooty()+self.root.winfo_height(), 1040)
+        placement.resize_for_video(800, 490)
+        self.root.update()
+        self.assertEqual(placement._geometry(), restored)
+
+    def test_maximizing_does_not_replace_saved_normal_size(self):
+        placement = self.placement()
+        self.root.geometry('640x410+300+200'); self.root.update()
+        self.pump_until(lambda: PositionStore(self.path).read(1)[1] is not None)
+        self.root.state('zoomed'); self.root.update()
+        placement.close()
+        self.assertTrue(placement.worker.closed.wait(2))
+        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (300, 200, 640, 410))
+
     def test_reset_repositions_open_windows_and_next_open_uses_defaults(self):
         for camera, pos in [('1', (-1500, -100)), ('2', (500, 300))]:
             PositionStore(self.path).save(camera, 0, screens_signature(SCREENS), *pos)
@@ -328,7 +432,7 @@ class TkPlacementTests(unittest.TestCase):
         self.root.iconify(); self.root.update()
         placement.close()
         self.assertTrue(placement.worker.closed.wait(2))
-        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (330, 210))
+        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (330, 210, 400, 240))
 
     def test_video_resize_is_fitted_without_changing_native_surface(self):
         placement = self.placement()
@@ -351,9 +455,10 @@ class TkPlacementTests(unittest.TestCase):
             geometry.assert_not_called()
         self.assertTrue(placement.user_placed)
         self.pump_until(lambda: PositionStore(self.path).read(1)[1] is not None)
-        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (-7, 0))
+        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (-7, 0, *snapped[:2]))
 
     def test_early_snap_is_preserved_when_initial_display_query_finishes(self):
+        PositionStore(self.path).save(1, 0, screens_signature(SCREENS), 300, 200, 640, 410)
         entered, release = threading.Event(), threading.Event()
         def slow_screens():
             entered.set()
@@ -371,6 +476,7 @@ class TkPlacementTests(unittest.TestCase):
                 self.pump_until(lambda: placement.token is not None)
                 geometry.assert_not_called()
             self.assertEqual(placement._geometry(), snapped)
+            self.pump_until(lambda: PositionStore(self.path).read(1)[1][3:] == snapped[:2])
         finally:
             release.set()
 
@@ -404,7 +510,7 @@ class TkPlacementTests(unittest.TestCase):
             placement.close()
             geometry.assert_not_called()
         self.assertTrue(placement.worker.closed.wait(2))
-        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (340, 220))
+        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (340, 220, 680, 430))
 
     def test_destroy_stops_worker_and_cancels_poll(self):
         placement = self.placement()
@@ -454,12 +560,19 @@ def poll():
     placement = app.placement
     if placement.token is not None and not placement.settling:
         if mode == 'move' and not moved:
-            app.root.geometry('400x240+350+220')
+            app.root.geometry('640x410+350+220')
             moved = True
         elif (mode != 'move' or reported is not None or PositionStore(database).read(camera)[1] is not None):
             generation = placement.token[0]
             if generation != reported:
-                Path(marker).write_text(json.dumps([generation, app.root.winfo_x(), app.root.winfo_y()]))
+                if mode == 'restore' and reported is None:
+                    owner.snapshot = PlayerSnapshot(state='PLAYING', width=1920, height=1080)
+                    app.root.after_cancel(app._timer)
+                    app.check_stream_status()
+                    app.root.update_idletasks()
+                    assert app._sized
+                Path(marker).write_text(json.dumps([generation, app.root.winfo_x(), app.root.winfo_y(),
+                                                   app.root.winfo_width(), app.root.winfo_height()]))
                 reported = generation
     if not app.closing:
         app.root.after(50, poll)
@@ -489,10 +602,10 @@ assert app.placement.worker.closed.wait(2)
 
             try:
                 initial, marker = start('1', 'move', 'initial.json')
-                self.assertEqual(json.loads(marker.read_text()), [0, 350, 220])
+                self.assertEqual(json.loads(marker.read_text()), [0, 350, 220, 640, 410])
                 stop(initial)
                 restored, marker1 = start('1', 'restore', 'restored.json')
-                self.assertEqual(json.loads(marker1.read_text()), [0, 350, 220])
+                self.assertEqual(json.loads(marker1.read_text()), [0, 350, 220, 640, 410])
                 other, marker2 = start('2', 'move', 'other.json')
                 PositionStore(path).reset()
                 def reset_seen(marker):
@@ -501,8 +614,8 @@ assert app.placement.worker.closed.wait(2)
                     except (ValueError, OSError):
                         return False
                 eventually(lambda: reset_seen(marker1) and reset_seen(marker2), timeout=4)
-                self.assertNotEqual(json.loads(marker1.read_text())[1:], [350, 220])
-                self.assertNotEqual(json.loads(marker2.read_text())[1:], [350, 220])
+                self.assertNotEqual(json.loads(marker1.read_text())[1:3], [350, 220])
+                self.assertNotEqual(json.loads(marker2.read_text())[1:3], [350, 220])
                 stop(restored)
                 stop(other)
                 self.assertEqual(PositionStore(path).read(1), (1, None))
