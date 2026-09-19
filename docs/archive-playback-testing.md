@@ -7,19 +7,28 @@ attendez sa fermeture complète avant de passer à la deuxième caméra.
 
 ## Préparation et vérifications sans lecteur
 
-Utiliser l’interpréteur habituel du Viewer (celui que renvoie `python`, ou son
-chemin configuré dans le lanceur local). Le cache est local dans AppData,
-pas dans le dossier OneDrive des sources. Installer les dépendances sur cet
-interpréteur si nécessaire ; `tzdata` est la nouvelle dépendance :
+Utiliser explicitement le Python 3.9 du Viewer. Dans PowerShell, définir cette
+variable une fois par terminal, puis la réutiliser dans toutes les commandes :
 
 ```powershell
-python -m pip install -r requirements.txt
+$CameraPython = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python39\python.exe'
+```
+
+Ne pas utiliser simplement `python`, qui peut désigner une autre installation.
+Si le Viewer utilise ailleurs un chemin différent, adapter uniquement cette
+variable. Les processus enfants utilisent ensuite le même interpréteur.
+Le cache est local dans AppData, pas dans le dossier OneDrive des sources.
+Installer les dépendances sur cet interpréteur si nécessaire ; `tzdata` est
+la nouvelle dépendance :
+
+```powershell
+& $CameraPython -m pip install -r requirements.txt
 ```
 
 Puis lancer uniquement les nouveaux tests synthétiques, sans caméra ni lecteur :
 
 ```powershell
-python -m unittest discover -s tests -p "test_playback.py" -v
+& $CameraPython -m unittest discover -s tests -p "test_playback.py" -v
 ```
 
 Ils couvrent les fuseaux/DST, limites de jours, états d’index, pagination,
@@ -33,13 +42,13 @@ sans ouvrir de lecteur ni diffuser de son. Elle appelle FFmpeg. Prévoir quelque
 minutes selon le poste. Le dossier doit être nouveau :
 
 ```powershell
-python tools/create_playback_fixture.py --directory playback-fixtures
+& $CameraPython tools/create_playback_fixture.py --directory playback-fixtures
 ```
 
 Puis ouvrir volontairement le lecteur intégré sur ce banc :
 
 ```powershell
-python camera_playback.py --fixture-directory playback-fixtures --camera 901
+& $CameraPython camera_playback.py --fixture-directory playback-fixtures --camera 901
 ```
 
 Le banc utilise sa propre clé, son propre index et son propre cache ; il ne lit
@@ -57,8 +66,8 @@ animée ; la piste audio est une tonalité. Le son initial est coupé.
 6. Refaire, si souhaité, avec une fixture HEVC dans un **autre dossier** :
 
 ```powershell
-python tools/create_playback_fixture.py --directory playback-fixtures-hevc --codec hevc
-python camera_playback.py --fixture-directory playback-fixtures-hevc --camera 901
+& $CameraPython tools/create_playback_fixture.py --directory playback-fixtures-hevc --codec hevc
+& $CameraPython camera_playback.py --fixture-directory playback-fixtures-hevc --camera 901
 ```
 
 Les fichiers de mire ne contiennent pas encore de compteur OSD absolu : ce banc
@@ -70,11 +79,14 @@ des timestamps/compteurs reste à compléter avant de fermer l’issue.
 Pour ouvrir **uniquement** Playback, sans le moniteur de santé/direct/PTZ :
 
 ```powershell
-python camera_playback.py
+& $CameraPython camera_playback.py
 ```
 
-Ou lancer `Lancer-Enregistrements.cmd`, qui conserve l’environnement de dépendances
-local utilisé par le lanceur existant. Choisir ensuite une seule caméra dans les
+Ou lancer `Lancer-Enregistrements.cmd`. Les deux lanceurs Windows utilisent
+`%LOCALAPPDATA%\Programs\Python\Python39\python.exe` par défaut ; la variable
+`CAMERA_PYTHON` permet de choisir explicitement un autre interpréteur.
+Ils n’ajoutent pas le dossier de dépendances temporaire `.release-work/test-deps`.
+Choisir ensuite une seule caméra dans les
 filtres et dans la sélection active. En Réglages, confirmer son fuseau pour CGI.
 Si l’identité ne peut pas être découverte, renseigner une révision locale.
 Enregistrer puis fermer/rouvrir Playback. Aucun mot de passe supplémentaire.
@@ -104,7 +116,7 @@ L’original et la clé restent privés, même si un test échoue.
 Dans un créneau permettant l’ouverture des fenêtres, lancer le Viewer :
 
 ```powershell
-python camera_viewer.py
+& $CameraPython camera_viewer.py
 ```
 
 Vérifier l’entrée globale et par caméra, une seule fenêtre Playback, le résumé
@@ -119,7 +131,7 @@ la réserver au moment approprié. Elle ne constitue pas une validation physique
 automatique des deux caméras :
 
 ```powershell
-python -m unittest discover -s tests -v
+& $CameraPython -m unittest discover -s tests -v
 ```
 
 Pour un retour utile, indiquer caméra/API, action exacte, résultat attendu/observé,

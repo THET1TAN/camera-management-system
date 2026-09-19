@@ -13,8 +13,11 @@ quality and measured export bounds require user-run qualification.
 Cross-archive range export remains outstanding; this is not
 a release or an assertion that issue #15 is complete.
 
-Use **Enregistrements** in Camera Viewer, or `python camera_playback.py` for the
-standalone archive browser. Opening its calendar does not start a video. Add the
+Use **Enregistrements** in Camera Viewer, or `Lancer-Enregistrements.cmd` for the
+standalone archive browser. Both Windows launchers default to the user's
+`%LOCALAPPDATA%\Programs\Python\Python39\python.exe`; set `CAMERA_PYTHON` to
+override that explicit path. They do not inject temporary test dependencies.
+Opening its calendar does not start a video. Add the
 new `tzdata` dependency using the same Python interpreter as the application.
 See [behavior, design and limits](docs/archive-playback.md) and
 [commands and test sequence](docs/archive-playback-testing.md).

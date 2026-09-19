@@ -1,5 +1,6 @@
 @echo off
 setlocal
+title Camera - v0.2.11-dev
 cd /d "%~dp0"
 if not defined CAMERA_PYTHON set "CAMERA_PYTHON=%LOCALAPPDATA%\Programs\Python\Python39\python.exe"
 if not exist "%CAMERA_PYTHON%" (
@@ -8,10 +9,13 @@ if not exist "%CAMERA_PYTHON%" (
   pause
   exit /b 1
 )
-"%CAMERA_PYTHON%" -u camera_playback.py %*
+echo Camera - v0.2.11-dev
+echo Dossier : %CD%
+echo.
+"%CAMERA_PYTHON%" -u camera_viewer.py
 if errorlevel 1 (
   echo.
-  echo Echec du lancement. Conservez ce message pour le diagnostic.
+  echo Le programme a rencontre une erreur. Conservez ce message pour le diagnostic.
   pause
 )
 endlocal
