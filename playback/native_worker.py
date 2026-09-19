@@ -1,0 +1,167 @@
+"""Disposable archive libVLC owner. No Tk and no camera credentials in this process."""
+import json
+import os
+import sys
+import threading
+import time
+from urllib.parse import urlsplit
+
+
+class Commands:
+    def __init__(self, config):
+        self.stop = threading.Event()
+        self.controls = config['controls']
+        self.seek = None
+
+    def read(self):
+        pending = bytearray()
+        try:
+            while True:
+                data = os.read(sys.stdin.fileno(), 4096)
+                if not data:
+                    break
+                pending.extend(data)
+                if len(pending) > 65536:
+                    break
+                while b'\n' in pending:
+                    line, _, rest = pending.partition(b'\n')
+                    pending = bytearray(rest)
+                    message = json.loads(line)
+                    if 'controls' in message:
+                        self.controls = message['controls']
+                    if 'seek' in message:
+                        self.seek = message['seek']
+        except (OSError, ValueError):
+            pass
+        finally:
+            self.stop.set()
+            # A dead parent cannot leave stop/release blocked in a native call.
+            def watchdog():
+                time.sleep(2)
+                os._exit(0)
+            threading.Thread(target=watchdog, daemon=True).start()
+
+
+def run(config, commands):
+    generation = config['generation']
+    def emit(**message):
+        print(json.dumps(dict(message, generation=generation)), flush=True)
+    def call(name, function, *args):
+        emit(kind='operation', name=name, phase='enter')
+        value = function(*args)
+        emit(kind='operation', name=name, phase='exit')
+        return value
+    instance = player = media = None
+    try:
+        parts = urlsplit(config['url'])
+        if parts.scheme != 'http' or parts.hostname != '127.0.0.1' or parts.username is not None:
+            raise ValueError
+        import vlc
+        emit(kind='runtime', python=sys.version.split()[0], python_vlc=vlc.__version__,
+             libvlc=vlc.libvlc_get_version().decode(errors='replace'))
+        instance = call('create', vlc.Instance, '--no-video-title-show', '--verbose=-1',
+            '--network-caching=500', '--file-caching=300', '--avcodec-threads=2',
+            '--no-video-deco', '--no-skip-frames')
+        player = call('create', instance.media_player_new)
+        media = call('create', instance.media_new, config['url'])
+        offset = max(0., config['offset'])
+        call('options', media.add_option, f':start-time={offset:.6f}')
+        call('set-media', player.set_media, media)
+        call('attach', player.set_hwnd, config['hwnd'])
+        desired = dict(commands.controls)
+        # Audio is applied before playback as well as after native initialization.
+        call('audio', player.audio_set_mute, desired['muted'])
+        call('audio', player.audio_set_volume, desired['volume'])
+        call('rate', player.set_rate, desired['rate'])
+        if call('play', player.play) == -1:
+            emit(kind='failure', reason='vlc-error')
+            return
+        applied, seek_id, opening = None, None, True
+        seeking, seek_deadline = offset, time.monotonic()+20
+        sought = False
+        previous_video = (0, 0)
+        last_progress = time.monotonic()
+        while not commands.stop.wait(.1):
+            state = call('state', player.get_state)
+            if state == vlc.State.Error:
+                emit(kind='failure', reason='vlc-error')
+                return
+            if state == vlc.State.Ended:
+                emit(kind='sample', state='ENDED', position=call('time', player.get_time)/1000,
+                     rate=call('rate', player.get_rate), decoded=0, displayed=0)
+                return
+            ready = state in (vlc.State.Playing, vlc.State.Paused)
+            controls = dict(commands.controls)
+            if ready and (applied != controls or opening):
+                call('audio', player.audio_set_volume, int(controls['volume']))
+                call('audio', player.audio_set_mute, bool(controls['muted']))
+                accepted = call('rate', player.set_rate, float(controls['rate']))
+                if accepted == -1:
+                    emit(kind='failure', reason='rate-unavailable')
+                    return
+                if seeking is None:
+                    call('pause', player.set_pause, int(controls['paused']))
+                applied = controls
+                opening = False
+            command = commands.seek
+            if command and command['id'] != seek_id:
+                seek_id = command['id']
+                seeking, seek_deadline, sought = max(0., command['offset']), time.monotonic()+20, False
+                if state == vlc.State.Paused:
+                    call('pause', player.set_pause, 0)
+            if ready and seeking is not None and not sought:
+                # Do not rely on HLS duration or its default live-edge choice.
+                call('seek', player.set_time, int(seeking*1000))
+                sought = True
+            position = max(0., call('time', player.get_time)/1000)
+            stats = vlc.MediaStats()
+            valid = call('stats', media.get_stats, stats)
+            video = (stats.decoded_video, stats.displayed_pictures) if valid else previous_video
+            if all(a > b for a, b in zip(video, previous_video)):
+                previous_video = video
+                last_progress = time.monotonic()
+            if seeking is not None:
+                if ready and abs(position-seeking) <= 1.5 and video[0] > 0 and video[1] > 0:
+                    seeking = None
+                    call('pause', player.set_pause, int(controls['paused']))
+                elif time.monotonic() > seek_deadline:
+                    emit(kind='failure', reason='seek-unavailable')
+                    return
+            rate = call('rate', player.get_rate)
+            if ready and abs(rate-float(controls['rate'])) > .01:
+                emit(kind='failure', reason='rate-unavailable')
+                return
+            label = ('SEEKING' if seeking is not None else 'PAUSED' if controls['paused'] and ready else
+                     'BUFFERING' if not ready or time.monotonic()-last_progress > 2 else 'PLAYING')
+            emit(kind='sample', state=label, position=position, rate=rate,
+                 decoded=video[0], displayed=video[1], audio=stats.played_abuffers if valid else 0)
+    except Exception:
+        emit(kind='failure', reason='native-unavailable')
+    finally:
+        try:
+            if player is not None:
+                call('stop', player.stop)
+                call('detach', player.set_hwnd, 0)
+                call('release', player.release)
+            if media is not None:
+                call('release', media.release)
+            if instance is not None:
+                call('release', instance.release)
+        except Exception:
+            pass
+
+
+def main():
+    line = bytearray()
+    while len(line) < 65536:
+        chunk = os.read(sys.stdin.fileno(), 1)
+        if not chunk or chunk == b'\n':
+            break
+        line.extend(chunk)
+    try:
+        config = json.loads(line)
+        commands = Commands(config)
+        threading.Thread(target=commands.read, daemon=True).start()
+        run(config, commands)
+    except Exception:
+        pass

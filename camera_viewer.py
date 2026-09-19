@@ -76,6 +76,9 @@ class CameraViewer:
         self.managers = []
         self.reset_task = None
         self.reset_after = None
+        self.playback_window = None
+        self.playback_icons = None
+        self.children.close_guards.append(lambda: self.playback_window is None)
         parent_lifetime.bind(root, self.on_closing)
         
         self.root.grid_rowconfigure(0, weight=1)
@@ -102,6 +105,10 @@ class CameraViewer:
 
         self.status_detail = tk.Label(main_frame, text='', height=1, anchor='w')
         self.status_detail.grid(row=2, column=0, sticky='ew', padx=8, pady=(0, 5))
+        from playback.widgets import Icons, IconButton, Help
+        self.playback_icons = Icons(root)
+        # Tooltips do not replace the existing availability summary.
+        self.playback_help = Help(root, None)
         self.load_cameras()
         self.health_after = self.root.after(100, self._poll_health)
         
@@ -118,6 +125,9 @@ class CameraViewer:
             text="Réinitialiser la position des fenêtres", cursor="hand2",
             command=self.reset_window_positions)
         self.reset_positions_button.grid(row=1, column=0, pady=(5, 0))
+        self.playback_button = IconButton(button_frame, 'archives', self.open_playback,
+            self.playback_icons, self.playback_help, label=True)
+        self.playback_button.grid(row=2, column=0, pady=(5, 0))
         
         self.root.bind('<Up>', self.navigate_up)
         self.root.bind('<Down>', self.navigate_down)
@@ -161,6 +171,14 @@ class CameraViewer:
                                        command=lambda c=camera: self.play_ptz_thread(c),
                                        cursor="hand2")
                 ptz_button.pack(side=tk.LEFT, padx=2)
+
+            # A compact shortcut opens the SAME archive window at this camera.
+            # Local import keeps Viewer startup independent of media dependencies.
+            from playback.widgets import IconButton
+            archive_button = IconButton(button_frame, 'archives',
+                lambda c=camera: self.open_playback(c[0]), self.playback_icons, self.playback_help,
+                tip='Ouvrir les enregistrements de cette caméra')
+            archive_button.pack(side=tk.LEFT, padx=2)
             
             self.camera_list.window_create("end", window=button_frame)
             self.camera_list.insert(tk.END, "\n")
@@ -264,6 +282,18 @@ class CameraViewer:
         if process is not None:
             self.managers.append(process)
 
+    def open_playback(self, camera_id=None):
+        if self.children.closing:
+            return
+        if self.playback_window is not None:
+            if not self.playback_window.closing:
+                self.playback_window.focus_camera(camera_id)
+            return
+        from playback.ui import PlaybackWindow
+        def released():
+            self.playback_window = None
+        self.playback_window = PlaybackWindow(self.root, camera_id, on_closed=released)
+
     def reset_window_positions(self):
         if self.children.closing or self.reset_task is not None:
             return
@@ -284,6 +314,10 @@ class CameraViewer:
                 "Impossible de réinitialiser les positions enregistrées. Réessayez.")
 
     def on_closing(self):
+        if hasattr(self, 'playback_help'):
+            self.playback_help.hide()
+        if self.playback_window is not None:
+            self.playback_window.close()
         if self.reset_after is not None:
             self.root.after_cancel(self.reset_after)
             self.reset_after = None
@@ -296,7 +330,7 @@ if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
     root = tk.Tk()
-    root.title("Camera Viewer - v0.2.10")
-    root.geometry("470x290")
+    root.title("Camera Viewer - v0.2.11-dev")
+    root.geometry("470x345")
     app = CameraViewer(root)
     root.mainloop()
