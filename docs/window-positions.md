@@ -19,6 +19,11 @@ v0.2.9 release documentation). This change does not create a new release snapsho
   gaps between monitors and taskbars are not treated as usable screen space.
 - At restoration, reset or a display-layout change, a window larger than the
   available work area is reduced to keep its title bar and controls accessible.
+- Fitting uses the visible Windows frame. Invisible resize borders may extend
+  beyond a screen edge, so restoring a flush left/right or full-width placement
+  does not add a gap or shrink the window. This also covers portrait layouts.
+  The monitor containing most of the visible window is selected, even when its
+  invisible border overlaps an adjacent monitor.
 - Windows Snap and manual resizing remain in control while arranging windows.
   Placement polling only records changes; it does not rewrite their geometry.
   If a window is moved, resized, snapped or maximized before the first video arrives,
@@ -78,6 +83,13 @@ can lose the latest move or resize. The usual parent/child shutdown contract sti
 
 Windows uses `EnumDisplayMonitors` and `GetMonitorInfoW` work areas in the same
 process DPI coordinate space as Tk; the feature does not change DPI awareness.
+When fitting, the Tk adapter measures its own window's invisible frame with
+`GetWindowRect` and `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`.
+DWM physical coordinates are converted with `PhysicalToLogicalPointForPerMonitorDPI`
+before comparison. Unsupported or failed queries retain conservative whole-frame
+fitting. Only the short frame query runs on Tk; polling never rewrites user geometry.
+See Microsoft's [visible and invisible window bounds](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect)
+and [DPI coordinate conversion](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-physicaltologicalpointforpermonitordpi).
 Other platforms use Tk's primary-screen dimensions as a fallback and do not
 claim the Windows multi-monitor support. See Microsoft's
 [monitor enumeration](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumdisplaymonitors)
@@ -86,7 +98,7 @@ and [multiple-monitor coordinates](https://learn.microsoft.com/en-us/windows/win
 ## Validation
 
 On Windows / Python 3.14 / Tk 8.6, the original **246 tests pass** before the
-change. The updated suite has **297 passing tests**: 51 added cases cover storage
+change. The updated suite has **305 passing tests**: 59 added cases cover storage
 across a new Python process, simultaneous camera writers, reset generations and
 late writes, negative coordinates, monitor gaps, work areas, monitor removal and
 rearrangement, resized windows, minimized windows, storage failure, reset-button
@@ -100,6 +112,12 @@ older running writers/resetters), invalid dimensions, oversized restored windows
 legacy aspect-ratio sizing and preservation of normal dimensions during maximization.
 The size-persistence follow-up passed all 297 tests in 28.630 seconds in the
 working checkout, with no skips.
+Eight frame-restoration cases cover portrait left/right/full-width placements,
+adjacent monitors, off-screen/taskbar recovery, DPI conversion, unavailable or
+inconsistent native bounds, and repeated close/reopen cycles. The integration
+case uses real Windows DWM margins with a simulated portrait display and verifies
+three restorations per side with no coordinate or size drift, including first video.
+The frame-restoration follow-up passed all 305 tests in 28.867 seconds, without skips.
 
 Real Tk tests move and reopen windows. A process integration test launches real
 `VideoPlayer` processes with simulated media, resizes and restarts a player, checks

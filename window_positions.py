@@ -75,8 +75,44 @@ def windows_screens():
     return tuple(sorted(screens))
 
 
-def visible_geometry(camera_id, position, size, screens, decorations=(16, 39)):
-    """Fit the whole decorated window to a real work area, never a desktop gap."""
+def windows_frame_insets(hwnd):
+    """Invisible resize margins in this window's logical (Tk) coordinates."""
+    if os.name != 'nt':
+        return (0, 0, 0, 0)
+    try:
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        dwmapi = ctypes.WinDLL('dwmapi')
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.PhysicalToLogicalPointForPerMonitorDPI.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+        user32.PhysicalToLogicalPointForPerMonitorDPI.restype = wintypes.BOOL
+        dwmapi.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD,
+                                               ctypes.c_void_p, wintypes.DWORD]
+        dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
+        outer, visible = wintypes.RECT(), wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(outer)):
+            return (0, 0, 0, 0)
+        # DWMWA_EXTENDED_FRAME_BOUNDS excludes invisible borders, but is physical.
+        if dwmapi.DwmGetWindowAttribute(hwnd, 9, ctypes.byref(visible), ctypes.sizeof(visible)) != 0:
+            return (0, 0, 0, 0)
+        top_left = wintypes.POINT(visible.left, visible.top)
+        bottom_right = wintypes.POINT(visible.right, visible.bottom)
+        for point in (top_left, bottom_right):
+            if not user32.PhysicalToLogicalPointForPerMonitorDPI(hwnd, ctypes.byref(point)):
+                return (0, 0, 0, 0)
+        if not (outer.left <= top_left.x < bottom_right.x <= outer.right and
+                outer.top <= top_left.y < bottom_right.y <= outer.bottom):
+            return (0, 0, 0, 0)
+        return (top_left.x-outer.left, top_left.y-outer.top,
+                outer.right-bottom_right.x, outer.bottom-bottom_right.y)
+    except (OSError, AttributeError):
+        return (0, 0, 0, 0)  # Older Windows or unavailable composition: conservative fit.
+
+
+def visible_geometry(camera_id, position, size, screens, decorations=(16, 39),
+                     invisible_frame=(0, 0, 0, 0)):
+    """Fit the visible frame to a work area; resize-only borders may extend past it."""
+    inset_left, inset_top, inset_right, inset_bottom = invisible_frame
     primary = next((s for s in screens if s.primary), screens[0])
     if position is None:
         offset = 24 + (int(hashlib.sha256(str(camera_id).encode()).hexdigest()[:8], 16) % 8) * 28
@@ -84,12 +120,20 @@ def visible_geometry(camera_id, position, size, screens, decorations=(16, 39)):
         screen = primary
     else:
         x, y = position
-        # Nearest work area, even if the saved point is completely off screen.
-        def distance(s):
+        # A snapped origin may be on the adjacent monitor by a few invisible pixels.
+        # Use the visible rectangle's overlap before distance to select its monitor.
+        vl, vt = x+inset_left, y+inset_top
+        vr = x+size[0]+decorations[0]-inset_right
+        vb = y+size[1]+decorations[1]-inset_bottom
+        def rank(s):
             l, t, r, b = s.work
-            return max(l-x, 0, x-(r-1))**2 + max(t-y, 0, y-(b-1))**2
-        screen = min(screens, key=distance)
+            overlap = max(0, min(vr, r)-max(vl, l)) * max(0, min(vb, b)-max(vt, t))
+            distance = max(l-vr, 0, vl-r)**2 + max(t-vb, 0, vt-b)**2
+            return -overlap, distance
+        screen = min(screens, key=rank)
     left, top, right, bottom = screen.work
+    left, top = left-inset_left, top-inset_top
+    right, bottom = right+inset_right, bottom+inset_bottom
     width = max(1, min(size[0], right-left-decorations[0]))
     height = max(1, min(size[1], bottom-top-decorations[1]))
     x = max(left, min(x, right-width-decorations[0]))
@@ -260,8 +304,10 @@ class WindowPlacement:
     def _fit(self, position, size):
         border = max(0, self.root.winfo_rootx() - self.root.winfo_x())
         title = max(0, self.root.winfo_rooty() - self.root.winfo_y())
+        insets = windows_frame_insets(int(self.root.wm_frame(), 0)) if os.name == 'nt' else (0, 0, 0, 0)
+        insets = tuple(min(value, limit) for value, limit in zip(insets, (border, title, border, border)))
         return visible_geometry(self.camera_id, position, size, self.screens,
-                                (border*2, title+border))
+                                (border*2, title+border), insets)
 
     def _place(self, placement):
         position = placement[:2] if placement is not None else None

@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 
 from window_positions import (Screen, PositionStore, PlacementWorker, WindowPlacement,
                               reset_positions, screens_signature, visible_geometry,
-                              windows_screens)
+                              windows_frame_insets, windows_screens)
 
 
 PRIMARY = Screen('main', (0, 0, 1920, 1080), (0, 0, 1920, 1040), True)
@@ -37,6 +37,35 @@ def eventually(predicate, timeout=3, pump=None):
 
 
 class GeometryTests(unittest.TestCase):
+    def test_portrait_edge_placements_keep_exact_position_and_size(self):
+        portrait = Screen('portrait', (0, 0, 1080, 1920), (0, 0, 1080, 1880), True)
+        # 7 px are invisible on each side; the visible frame is 2 px wider than the client.
+        for position, size in [((-7, 0), (538, 1848)), ((533, 0), (538, 1848)),
+                               ((-7, 0), (1078, 1848))]:
+            with self.subTest(position=position, size=size):
+                self.assertEqual(visible_geometry('1', position, size, (portrait,),
+                                                  invisible_frame=(7, 0, 7, 7)), (*size, *position))
+
+    def test_invisible_border_on_neighbor_monitor_does_not_change_target_screen(self):
+        for screens, position, size in [
+            ((PRIMARY, LEFT), (-7, 0), (958, 1008)),
+            ((LEFT, PRIMARY), (-7, 0), (958, 1008)),
+            ((PRIMARY, LEFT), (-1927, -200), (1918, 1008)),
+        ]:
+            with self.subTest(position=position):
+                self.assertEqual(visible_geometry('1', position, size, screens,
+                                                  invisible_frame=(7, 0, 7, 7)), (*size, *position))
+
+    def test_frame_fit_still_keeps_visible_content_out_of_taskbar_and_offscreen(self):
+        small = Screen('small', (0, 0, 640, 480), (40, 0, 640, 480), True)
+        self.assertEqual(visible_geometry('1', (-9999, 9000), (800, 1000), (small,),
+                                          invisible_frame=(7, 0, 7, 7)), (598, 448, 33, 0))
+
+    def test_mostly_visible_window_uses_its_monitor_even_when_origin_overlaps_neighbor(self):
+        right = Screen('right', (1920, 0, 3000, 1920), (1920, 0, 3000, 1880))
+        self.assertEqual(visible_geometry('1', (1900, 100), (800, 600), (PRIMARY, right),
+                                          invisible_frame=(7, 0, 7, 7)), (800, 600, 1913, 100))
+
     def test_single_screen_restores_exact_position(self):
         self.assertEqual(visible_geometry('1', (300, 150), (800, 600), (PRIMARY,)),
                          (800, 600, 300, 150))
@@ -79,6 +108,50 @@ class GeometryTests(unittest.TestCase):
                      Screen('left', LEFT.bounds, LEFT.work, True))]
         for screens in variants:
             self.assertNotEqual(signature, screens_signature(screens))
+
+
+class FrameInsetsTests(unittest.TestCase):
+    def setUp(self):
+        self.user32, self.dwmapi = Mock(), Mock()
+        def outer(_hwnd, target):
+            target._obj.left, target._obj.top = -1000, 200
+            target._obj.right, target._obj.bottom = -344, 649
+            return True
+        def visible(_hwnd, _attribute, target, _size):
+            target._obj.left, target._obj.top = -1986, 400
+            target._obj.right, target._obj.bottom = -702, 1284
+            return 0
+        def logical(_hwnd, target):
+            target._obj.x //= 2
+            target._obj.y //= 2
+            return True
+        self.user32.GetWindowRect.side_effect = outer
+        self.dwmapi.DwmGetWindowAttribute.side_effect = visible
+        self.user32.PhysicalToLogicalPointForPerMonitorDPI.side_effect = logical
+        self.enterContext(patch('window_positions.os.name', 'nt'))
+        self.enterContext(patch('window_positions.ctypes.WinDLL', create=True,
+                                side_effect=lambda name, **kw: self.user32 if name == 'user32' else self.dwmapi))
+
+    def test_dwm_physical_coordinates_are_converted_before_measuring_margins(self):
+        self.assertEqual(windows_frame_insets(123), (7, 0, 7, 7))
+        self.assertEqual(self.user32.PhysicalToLogicalPointForPerMonitorDPI.call_count, 2)
+
+    def test_failed_native_queries_or_unavailable_dwm_use_conservative_fit(self):
+        for function, result in [(self.user32.GetWindowRect, False),
+                                 (self.dwmapi.DwmGetWindowAttribute, -1),
+                                 (self.user32.PhysicalToLogicalPointForPerMonitorDPI, False)]:
+            original = function.side_effect
+            function.side_effect = None
+            function.return_value = result
+            self.assertEqual(windows_frame_insets(123), (0, 0, 0, 0))
+            function.side_effect = original
+        self.dwmapi.DwmGetWindowAttribute.side_effect = OSError('DWM unavailable')
+        self.assertEqual(windows_frame_insets(123), (0, 0, 0, 0))
+
+    def test_inconsistent_dwm_rectangle_does_not_allow_clipping_content(self):
+        self.user32.PhysicalToLogicalPointForPerMonitorDPI.side_effect = None
+        self.user32.PhysicalToLogicalPointForPerMonitorDPI.return_value = True
+        self.assertEqual(windows_frame_insets(123), (0, 0, 0, 0))
 
 
 class StoreTests(unittest.TestCase):
@@ -309,6 +382,37 @@ class TkPlacementTests(unittest.TestCase):
         PositionStore(self.path).save(1, 0, screens_signature(SCREENS), -1500, -100)
         self.placement()
         self.assertEqual((self.root.winfo_x(), self.root.winfo_y()), (-1500, -100))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows visible frame measurement')
+    def test_portrait_edges_survive_repeated_close_restore_without_margin_or_size_drift(self):
+        self.screens = (Screen('portrait', (0, 0, 1080, 1920), (0, 0, 1080, 1880), True),
+                        Screen('neighbor', (-1920, 0, 0, 1080), (-1920, 0, 0, 1040)))
+        insets = windows_frame_insets(int(self.root.wm_frame(), 0))
+        self.assertGreater(insets[0], 0)  # Exercise real DWM borders, not the conservative fallback.
+        border = self.root.winfo_rootx() - self.root.winfo_x()
+        width = 540 - border*2 + insets[0] + insets[2]
+        for x in (-insets[0], 540-insets[0]):
+            camera = str(x)
+            initial = self.placement(camera=camera)
+            self.root.geometry(f'{width}x600+{x}+100'); self.root.update()
+            expected = initial._geometry()
+            initial.close()
+            self.assertTrue(initial.worker.closed.wait(2))
+            for _ in range(3):
+                window = tk.Toplevel(self.root)
+                self.windows.append(window)
+                window.geometry('400x240+300+200'); window.update()
+                restored = self.placement(window, camera)
+                restored.resize_for_video(800, 490)
+                window.update()
+                self.assertEqual(restored._geometry(), expected)
+                actual_insets = windows_frame_insets(int(window.wm_frame(), 0))
+                visible_left = window.winfo_x()+actual_insets[0]
+                visible_right = window.winfo_x()+window.winfo_width()+border*2-actual_insets[2]
+                self.assertEqual((visible_left, visible_right), (0, 540) if x < 0 else (540, 1080))
+                restored.close()
+                self.assertTrue(restored.worker.closed.wait(2))
+                window.destroy()
 
     def test_move_close_and_new_window_restore_each_camera(self):
         first = self.placement()
