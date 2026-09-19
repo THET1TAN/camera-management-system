@@ -1,5 +1,30 @@
 # Camera Management System
 
+## Current sources: remembered window layout
+
+[PR #13](https://github.com/THET1TAN/camera-management-system/pull/13) implements
+[issue #6](https://github.com/THET1TAN/camera-management-system/issues/6): video
+windows remember their position and resized dimensions for each camera, including
+after restarting Camera Viewer.
+
+- **Arrange with Windows Snap:** snapping and manual resizing stay active.
+  Reopening restores the chosen size without letting the first video overwrite it.
+- **Keep edge alignment:** windows placed flush with an edge retain that alignment
+  on restoration, including portrait screens, without added side margins.
+- **Recover a visible layout:** if the monitor arrangement changes, windows return
+  to visible positions on the current primary screen.
+- **Reset the layout:** choose **Réinitialiser la position des fenêtres** below
+  **Manage Cameras** to clear saved positions and sizes and reposition open players.
+  Open players keep their current size where it fits; future openings use defaults.
+
+Positions and sizes are restored when the monitor layout matches. Snap groups
+and maximized/minimized states are not saved. Layout data stays locally in
+`camera_window_positions.db`, separate from camera credentials and excluded from
+Git. See the [window layout guide](docs/window-positions.md) for behavior and limits.
+
+These changes are in the root sources. The latest numbered release and preserved
+source snapshot remain v0.2.9; no new version snapshot or executable is included.
+
 ## Current release: v0.2.9 — nonblocking RTSP recovery
 
 Released September 18, 2026, through
@@ -14,8 +39,9 @@ Released September 18, 2026, through
 - **Bounded diagnostics:** rotating logs and terminal output record session
   changes, retry attempts and native operations to help diagnose failures.
 
-Root sources and [`~v0.2.9`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.9)
-contain this version. Older source snapshots remain unchanged. The version
+[`~v0.2.9`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.9)
+preserves this release; root sources also include the window-layout improvements
+described above. Older source snapshots remain unchanged. The version
 folders exclude private databases, keys, local configuration and logs.
 For an existing installation, launch `python camera_viewer.py` from the active
 application directory with its existing database and dependencies.
@@ -185,10 +211,16 @@ addresses, credentials, profile tokens or SOAP payloads. Diagnostics do not add
 text to the PTZ interface, and a log failure cannot prevent Stop.
 
 ```powershell
+$env:CAMERA_WINDOW_POSITIONS_FILE = Join-Path $env:TEMP ('camera-layout-tests-' + [guid]::NewGuid() + '.db')
 python -m unittest discover -s tests
 ```
 
-The v0.2.9 suite contains **246 passing tests**, including recovery supervision,
+The current root-source suite has **305 passing tests** on Windows, including
+remembered positions and sizes, Windows frame alignment, reset behavior, storage
+upgrades and concurrent players. The temporary layout database above keeps test
+windows separate from the installation's saved layout.
+
+The preserved v0.2.9 suite contains **246 passing tests**, including recovery supervision,
 native-call isolation, mute persistence, smoothed bitrate and counter rollover,
 ONVIF URI handling, availability checks and inherited PTZ/child-window behavior.
 The playback-option regression reads the frozen v0.2.8 source; when running tests
@@ -221,6 +253,7 @@ universal camera compatibility. Archived C simulations do not validate C physica
 | `player_worker.py` | Generic ONVIF discovery and one serialized libVLC session |
 | `player_metrics.py` | Five-reading bitrate average and unsigned byte-counter handling |
 | `player_diagnostics.py` | Rotating logs, bounded terminal relay and optional stack capture |
+| `window_positions.py` | Per-camera position/size persistence, visible screen fitting and layout reset |
 | `ptz_keyboard_control.py` | PTZ window and physical key tracking |
 | `ptz_command_worker.py` | Latest-state ONVIF commands and stops |
 | `ptz_velocity.py` | Advertised velocity spaces and speed scaling |

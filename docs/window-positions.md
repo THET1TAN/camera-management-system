@@ -1,7 +1,8 @@
 # Camera window positions and sizes — issue #6
 
-Unreleased feature, based on v0.2.9 and `main` `c1b7b77` (including the corrected
-v0.2.9 release documentation). This change does not create a new release snapshot.
+Root-source feature delivered through [PR #13](https://github.com/THET1TAN/camera-management-system/pull/13),
+based on v0.2.9 and `main` `c1b7b77` (including the corrected v0.2.9 release
+documentation). This change does not create a new numbered release or source snapshot.
 
 ## Use
 
