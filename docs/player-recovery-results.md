@@ -8,7 +8,34 @@ Intel UHD Graphics / D3D11VA observed in native synthetic-source diagnostics,
 Intel driver 32.0.101.7085. An NVIDIA RTX 3060 Laptop GPU (driver 32.0.16.1060)
 is also installed; it is not claimed as a separately validated renderer.
 
-## Latest compatibility validation
+## Latest bitrate recovery validation
+
+A physical-camera report noted `-- Mbps` after recovery. The available local logs
+showed ongoing decode/display progress with zero bitrate, also in a session with
+no recent replacement. Those logs already clamped the raw counter, so they do not
+establish its exact value at the incident. Inspection of the installed binding
+confirmed that `demux_read_bytes` is a signed 32-bit field. An accelerated replay
+reproduced the defect: above 2 GiB, valid negative values expired the bitrate to
+zero. It now interprets the counter as unsigned; full 4 GiB wraps rebaseline safely.
+Raw count and statistics-valid status are now retained in structured diagnostics.
+
+**246 tests pass in 14.092 seconds**. Added coverage includes both integer
+boundaries, missing/returning statistics, native-worker output, and a real Tk timer
+that displays **8.00 Mbps after process replacement** with signed counter values.
+The five-reading average and one-second display interval are unchanged.
+
+The native bench now also checks the actual bitrate label after every recovery.
+**2/2 cycles passed** (5-second TCP cut / 30-second silence), with displayed
+bitrates **0.36 / 0.41 Mbps** after recovery and changing images in both cases.
+The witness stayed on generation 1. Recovery took **10.534 / 7.399 seconds**;
+maximum Tk heartbeat gap **0.483 s**, shutdown **0.323 s**, no owned worker left.
+Results: [bitrate recovery rerun](validation/issue-9-bitrate-recovery.json).
+The signed-counter boundary itself is simulated; the native bench does not stream
+gigabytes. A repeat on the reported physical camera remains necessary to confirm
+that this defect fully explains that particular incident. Private camera logs
+are not published. Recovery policy and video playback options were not changed.
+
+## Earlier compatibility validation
 
 After the [v0.2.8 behavior audit](player-compatibility-audit.md), **241 tests pass
 in 13.058 seconds**, with no skips. This includes five-reading bitrate smoothing,
@@ -92,7 +119,8 @@ repeated display of one old decoded frame from counting as recovery.
 | PTZ / availability / cascading close | Inherited regression suite; PTZ engine and availability sources unchanged |
 | Real Windows VLC / RTSP TCP | Local synthetic H.264 + PCMU; source absence at launch and live outage/recovery |
 | Earlier 20-cycle run | 20/20 before the compatibility restoration; measurements and raw results above |
-| Current compatibility rerun | 2/2 with restored playback options and deadline-paced fixture; results above |
+| Earlier compatibility rerun | 2/2 with restored playback options and deadline-paced fixture; results above |
+| Current bitrate rerun | 2/2 with numeric bitrate labels and changing pictures after recovery; results above |
 | Graphics device-removal recovery | Fixed log/event path and session replacement simulated; no real driver reset performed |
 | Physical camera / H.265+ / UDP | Not performed |
 | Audible sound recovery | Not listened to; automated evidence is advancing native audio output buffers while muted |

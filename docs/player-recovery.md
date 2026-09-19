@@ -24,6 +24,11 @@ seconds of history under normal sampling, not a strict five-second time window.
 It retains two decimals, the previous 100 Mbps cap and `-- Mbps` for a zero or
 unavailable value. New sessions/counter resets establish a fresh baseline; missing
 stats expire after three seconds. The average never decides whether video is stuck.
+VLC's signed 32-bit byte counter is interpreted as an unsigned counter: crossing
+2 GiB no longer makes valid statistics look unavailable. A full 4 GiB wrap or a
+real reset establishes a new baseline and resumes the average with the next
+one-second reading, without inventing a large traffic spike. Diagnostics include
+the raw signed count and statistics-valid flag so these cases can be distinguished.
 Playback caches and decoding options also retain v0.2.8's defaults, including
 the 50 ms network cache. See the [compatibility audit](player-compatibility-audit.md)
 for regressions found, corrections and intentional differences.

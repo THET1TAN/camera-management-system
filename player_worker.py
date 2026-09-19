@@ -9,7 +9,7 @@ import time
 from urllib.parse import quote, urlsplit, urlunsplit
 from xml.sax.saxutils import escape
 from player_diagnostics import StackCapture
-from player_metrics import BitrateAverage
+from player_metrics import BitrateAverage, unsigned_byte_count
 
 
 # Preserve v0.2.8's playback/latency settings. Diagnostics replace file logging,
@@ -188,12 +188,14 @@ def run(config, commands, vlc_module=None, emit=None):
             valid = call('stats', media.get_stats, stats)
             width, height = call('stats', player.video_get_size, 0)
             now = time.monotonic()
-            received = stats.demux_read_bytes if valid else previous_bytes
-            rate = bitrate.observe(now, stats.demux_read_bytes if valid else None)
+            raw_received = stats.demux_read_bytes if valid else None
+            received = unsigned_byte_count(raw_received) if valid else previous_bytes
+            rate = bitrate.observe(now, raw_received)
             previous_bytes = received
             emit({'kind': 'sample', 'received': received, 'decoded': stats.decoded_video if valid else 0,
                   'displayed': stats.displayed_pictures if valid else 0, 'audio': stats.played_abuffers if valid else 0,
-                  'bitrate': rate, 'width': width, 'height': height})
+                  'bitrate': rate, 'received_raw': raw_received, 'stats_valid': bool(valid),
+                  'width': width, 'height': height})
             commands.stop.wait(.5)
     except Exception:
         # Exception bodies, SOAP, URIs and tracebacks can disclose credentials.

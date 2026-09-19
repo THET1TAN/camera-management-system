@@ -17,6 +17,15 @@ PTZ and availability. Passing those tests did not establish UI equivalence.
 The earlier statement that behavior was preserved went beyond that evidence.
 These were implementation and validation omissions, not changes requested by Joël.
 
+A subsequent physical-camera report exposed a further gap in the bitrate checks:
+libVLC's valid signed 32-bit byte count was treated as missing when it became
+negative above 2 GiB. Local logs showed advancing decoded/displayed counters with
+zero bitrate, including a session without recent replacement. The old logs had
+already clamped negative counts, so they cannot prove the raw value for that exact
+incident. The signed-counter defect was reproduced and fixed; tests now cross
+both 2 GiB and 4 GiB boundaries, replace the media process, and verify the actual
+Tk bitrate label. Native RTSP tests also require a numeric bitrate after recovery.
+
 ## Findings and disposition
 
 | Behavior | v0.2.8 | First issue #9 implementation | Corrected behavior / evidence |

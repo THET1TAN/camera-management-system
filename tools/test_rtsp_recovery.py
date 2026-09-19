@@ -117,6 +117,12 @@ def main():
                 elif now >= due:
                     raise AssertionError('No initial video/audio after source returned')
             elif phase == 'stable' and now >= due:
+                label = app.bitrate_label.cget('text')
+                if snap.bitrate <= 0 or label == '-- Mbps':
+                    raise AssertionError('Bitrate display did not return after video recovery')
+                results.setdefault('bitrate_checks', []).append({
+                    'cycle': cycle, 'generation': snap.generation,
+                    'bitrate_mbps': snap.bitrate, 'display': label})
                 if args.capture and captured is not None:
                     from PIL import ImageGrab, ImageChops
                     surface = app.video_surface

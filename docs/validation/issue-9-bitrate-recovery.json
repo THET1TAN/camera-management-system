@@ -1,0 +1,125 @@
+{
+  "scenario": "Windows libVLC / loopback RTSP TCP / H264 + PCMU",
+  "cycles": [
+    {
+      "cycle": 1,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 2,
+      "recovery_seconds": 10.534456500005035,
+      "generation_after": 3,
+      "displayed": 12,
+      "audio": 92
+    },
+    {
+      "cycle": 2,
+      "mode": "silence",
+      "duration": 30.0,
+      "generation_before": 3,
+      "recovery_seconds": 7.399033200003032,
+      "generation_after": 5,
+      "displayed": 10,
+      "audio": 89
+    }
+  ],
+  "errors": [],
+  "initial_offline_seconds": 2.0,
+  "initial_recovery_seconds": 2.7191852999967523,
+  "bitrate_checks": [
+    {
+      "cycle": 0,
+      "generation": 2,
+      "bitrate_mbps": 0.4174440818069831,
+      "display": "0.39 Mbps"
+    },
+    {
+      "cycle": 1,
+      "generation": 3,
+      "bitrate_mbps": 0.39425938599652066,
+      "display": "0.36 Mbps"
+    },
+    {
+      "cycle": 2,
+      "generation": 5,
+      "bitrate_mbps": 0.40671270476500565,
+      "display": "0.41 Mbps"
+    }
+  ],
+  "resources": [
+    {
+      "cycle": 0,
+      "tk": {
+        "rss_bytes": 40693760,
+        "handles": 260
+      },
+      "worker": {
+        "rss_bytes": 148447232,
+        "handles": 548
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 1,
+      "tk": {
+        "rss_bytes": 46096384,
+        "handles": 261
+      },
+      "worker": {
+        "rss_bytes": 148299776,
+        "handles": 548
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 2,
+      "tk": {
+        "rss_bytes": 96669696,
+        "handles": 262
+      },
+      "worker": {
+        "rss_bytes": 148443136,
+        "handles": 548
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    }
+  ],
+  "visual_checks": [
+    {
+      "cycle": 1,
+      "image_changed": true,
+      "color_fraction": 0.9852430555555556,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 2,
+      "image_changed": true,
+      "color_fraction": 0.9887152777777778,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    }
+  ],
+  "max_tk_heartbeat_gap_seconds": 0.48300469999958295,
+  "witness_generation": 1,
+  "final_snapshot": {
+    "state": "PLAYING",
+    "generation": 5,
+    "attempt": 4,
+    "reason": "",
+    "bitrate": 0.40671270476500565,
+    "width": 320,
+    "height": 180,
+    "received": 239128,
+    "decoded": 60,
+    "displayed": 52,
+    "audio": 222
+  },
+  "supervisor_threads": 2,
+  "status_pipe_threads": 2,
+  "elapsed_seconds": 65.48488550000184,
+  "close_seconds": 0.32250180000119144,
+  "workers_reaped": true
+}

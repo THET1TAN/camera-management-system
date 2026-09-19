@@ -250,7 +250,12 @@ class PlayerSupervisor:
                         sample['bitrate'] = max(0., float(message.get('bitrate', 0.)))
                         progress.observe(sample, now)
                         if now - last_metrics >= 5:
-                            self._log('metrics', generation, ' '.join(f'{key}={value}' for key, value in sample.items()))
+                            detail = ' '.join(f'{key}={value}' for key, value in sample.items())
+                            raw = message.get('received_raw')
+                            if isinstance(raw, int):
+                                detail += f' received_raw={raw}'
+                            detail += f' stats_valid={bool(message.get("stats_valid", True))}'
+                            self._log('metrics', generation, detail)
                             last_metrics = now
                         state = 'PLAYING' if progress.playing_since is not None else 'STARTING'
                         if state != self._snapshot.state:

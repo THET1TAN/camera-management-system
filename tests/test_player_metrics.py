@@ -1,3 +1,4 @@
+from ctypes import c_int32
 import unittest
 
 from player_metrics import BitrateAverage
@@ -5,6 +6,33 @@ from player_supervisor import PlayerSettings, Progress
 
 
 class BitrateAverageTests(unittest.TestCase):
+    def test_signed_two_gib_boundary_does_not_expire_the_bitrate(self):
+        meter = BitrateAverage()
+        start = (1 << 31) - 2_000_000
+        meter.observe(0, c_int32(start).value)
+        for second in range(1, 12):
+            with self.subTest(second=second):
+                raw = c_int32(start + second * 1_000_000).value
+                self.assertEqual(meter.observe(second, raw), 8)
+
+    def test_four_gib_wrap_rebaselines_without_a_spike_and_resumes(self):
+        meter = BitrateAverage()
+        start = (1 << 32) - 2_000_000
+        meter.observe(0, c_int32(start).value)
+        self.assertEqual(meter.observe(1, c_int32(start + 1_000_000).value), 8)
+        self.assertEqual(meter.observe(2, 0), 0)
+        self.assertEqual(meter.observe(3, 1_000_000), 8)
+        self.assertEqual(meter.observe(4, 2_000_000), 8)
+
+    def test_valid_negative_baseline_after_recovery_produces_a_fresh_average(self):
+        meter = BitrateAverage()
+        meter.observe(0, 0)
+        meter.observe(1, 125_000)
+        meter.observe(2, None)
+        self.assertEqual(meter.observe(5, None), 0)
+        self.assertEqual(meter.observe(6, -2_000_000_000), 0)
+        self.assertEqual(meter.observe(7, -1_999_500_000), 4)
+
     def test_half_second_packet_bursts_do_not_replace_the_one_second_rate(self):
         meter = BitrateAverage()
         self.assertEqual(meter.observe(0, 100_000_000), 0)

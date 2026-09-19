@@ -81,6 +81,41 @@ class ProgressTests(unittest.TestCase):
 
 
 class CallbackAndDiscoveryTests(unittest.TestCase):
+    def test_worker_reports_real_bitrate_and_input_progress_with_signed_byte_counter(self):
+        commands = Commands({})
+        vlc = Mock()
+        vlc.__version__ = 'test'
+        vlc.libvlc_get_version.return_value = b'test'
+        vlc.dll._name = 'test'
+        vlc.CallbackDecorators.LogCb = lambda callback: callback
+        vlc.MediaStats = SimpleNamespace
+        instance = vlc.Instance.return_value
+        player = instance.media_player_new.return_value
+        player.play.return_value = 0
+        player.video_get_size.return_value = (320, 180)
+        media = instance.media_new.return_value
+        samples = []
+
+        def stats(value):
+            value.demux_read_bytes = -2_000_000_000 + len(samples)*500_000
+            value.decoded_video = value.displayed_pictures = value.played_abuffers = len(samples)+1
+            return True
+
+        def emit(message):
+            if message['kind'] == 'sample':
+                samples.append(message)
+                if len(samples) == 3:
+                    commands.stop.set()
+
+        media.get_stats.side_effect = stats
+        with patch.object(commands.stop, 'wait', return_value=False), \
+                patch('player_worker.time.monotonic', side_effect=[0., 1., 2.]):
+            run({'generation': 2, 'hwnd': 1, 'uri': 'rtsp://127.0.0.1/test'}, commands, vlc, emit)
+        self.assertEqual([sample['bitrate'] for sample in samples], [0., 4., 4.])
+        self.assertTrue(all(sample['received_raw'] < 0 and sample['stats_valid'] for sample in samples))
+        self.assertEqual([sample['received'] for sample in samples],
+                         [2_294_967_296, 2_295_467_296, 2_295_967_296])
+
     def test_normal_launch_without_a_camera_address_keeps_the_legacy_argument_error(self):
         result = subprocess.run([sys.executable, 'player_vilkin_hikvision.py', '1'],
                                 capture_output=True, timeout=5)
@@ -315,6 +350,22 @@ class ProcessRecoveryTests(unittest.TestCase):
             self.assertEqual(app.mute_button.cget('relief'), 'flat')
             self.assertEqual(app.root.title(), 'Camera mute-test')
             self.assertEqual(owner._audio, (False, 42))
+        finally:
+            app.on_closing()
+            app.root.mainloop()
+
+    def test_bitrate_timer_displays_a_value_after_replacement_with_wrapped_counter(self):
+        from player_vilkin_hikvision import VideoPlayer
+        owner = self.owner({'fail_first': True, 'byte_counter_start': (1 << 31) - 1_000_000})
+        app = VideoPlayer('bitrate-recovery', supervisor_factory=lambda *args: owner)
+        app.root.withdraw()
+        try:
+            def restored():
+                app.root.update()  # Exercise the real Tk timer, not a direct refresh call.
+                return owner.snapshot.generation == 2 and app.bitrate_label.cget('text') == '8.00 Mbps'
+            self.wait_for(restored)
+            self.assertEqual(owner.snapshot.state, 'PLAYING')
+            self.assertGreater(owner.snapshot.received, 1 << 31)
         finally:
             app.on_closing()
             app.root.mainloop()

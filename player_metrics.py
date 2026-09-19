@@ -2,6 +2,11 @@
 from collections import deque
 
 
+def unsigned_byte_count(raw):
+    """libVLC 3 MediaStats exposes its wrapping byte counter as a signed int32."""
+    return int(raw) & 0xffffffff
+
+
 class BitrateAverage:
     """Legacy five-reading average, with readings at least one second apart."""
     def __init__(self):
@@ -17,12 +22,13 @@ class BitrateAverage:
         self.value = 0.
 
     def observe(self, now, received):
-        if received is None or received < 0:
+        if received is None:
             if self.missing_since is None:
                 self.missing_since = now
             if now - self.missing_since >= 3:
                 self.reset()
             return self.value
+        received = unsigned_byte_count(received)
         self.missing_since = None
         if self.last is None or now <= self.last[0] or received < self.last[1]:
             # A first sample or reset is a baseline, never a traffic burst.
