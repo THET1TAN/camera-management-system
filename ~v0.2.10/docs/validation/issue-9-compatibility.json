@@ -1,0 +1,105 @@
+{
+  "scenario": "Windows libVLC / loopback RTSP TCP / H264 + PCMU",
+  "cycles": [
+    {
+      "cycle": 1,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 2,
+      "recovery_seconds": 9.991830799997842,
+      "generation_after": 3,
+      "displayed": 4,
+      "audio": 72
+    },
+    {
+      "cycle": 2,
+      "mode": "silence",
+      "duration": 30.0,
+      "generation_before": 3,
+      "recovery_seconds": 6.552073799997743,
+      "generation_after": 5,
+      "displayed": 2,
+      "audio": 39
+    }
+  ],
+  "errors": [],
+  "initial_offline_seconds": 2.0,
+  "initial_recovery_seconds": 2.5601239999996324,
+  "resources": [
+    {
+      "cycle": 0,
+      "tk": {
+        "rss_bytes": 40755200,
+        "handles": 260
+      },
+      "worker": {
+        "rss_bytes": 183943168,
+        "handles": 689
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 1,
+      "tk": {
+        "rss_bytes": 46325760,
+        "handles": 261
+      },
+      "worker": {
+        "rss_bytes": 182439936,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 2,
+      "tk": {
+        "rss_bytes": 46485504,
+        "handles": 262
+      },
+      "worker": {
+        "rss_bytes": 182734848,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    }
+  ],
+  "visual_checks": [
+    {
+      "cycle": 1,
+      "image_changed": true,
+      "color_fraction": 0.9348958333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 2,
+      "image_changed": true,
+      "color_fraction": 0.9709201388888888,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    }
+  ],
+  "max_tk_heartbeat_gap_seconds": 0.3603189999994356,
+  "witness_generation": 1,
+  "final_snapshot": {
+    "state": "PLAYING",
+    "generation": 5,
+    "attempt": 4,
+    "reason": "",
+    "bitrate": 0.3781133042606504,
+    "width": 320,
+    "height": 180,
+    "received": 172127,
+    "decoded": 53,
+    "displayed": 39,
+    "audio": 165
+  },
+  "supervisor_threads": 2,
+  "status_pipe_threads": 2,
+  "elapsed_seconds": 63.863073099997564,
+  "close_seconds": 0.2932705999992322,
+  "workers_reaped": true
+}

@@ -1,0 +1,34 @@
+{
+  "scenario": "Native Windows mouse Snap to right half; VideoPlayer with simulated media and temporary positions",
+  "before_fix": {
+    "client_geometry": [
+      958,
+      993,
+      946,
+      0
+    ],
+    "geometry_writes_after_startup": 1
+  },
+  "after_snap": {
+    "client_geometry": [
+      958,
+      1000,
+      953,
+      0
+    ],
+    "geometry_writes_after_startup": 0
+  },
+  "after_first_video": {
+    "client_geometry": [
+      958,
+      1000,
+      953,
+      0
+    ],
+    "geometry_writes_after_startup": 0,
+    "video_sized": true
+  },
+  "physical_camera_contacted": false,
+  "physical_screen_configuration_changed": false,
+  "result": "pass"
+}

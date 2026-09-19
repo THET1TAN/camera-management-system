@@ -1,0 +1,22 @@
+Camera Management System — v0.2.9
+Date : 18 septembre 2026
+PR : https://github.com/THET1TAN/camera-management-system/pull/12
+Issue : https://github.com/THET1TAN/camera-management-system/issues/9
+
+Nouveautés et corrections
+------------------------
+- Reconnexion automatique après une interruption RTSP, avec tentatives espacées
+  et remplacement des sessions bloquées lorsque nécessaire.
+- Correction des gels de l'interface pendant une panne, une reconnexion ou la
+  fermeture : chaque session VLC s'exécute dans un processus supervisé, et les
+  callbacks ne déclenchent plus directement d'opérations de contrôle du lecteur.
+- Affichage d'un état de connexion pendant une interruption pour ne pas laisser
+  une image figée paraître en direct. La reprise est confirmée par la progression
+  des images décodées et affichées.
+- Journaux tournants de taille limitée et relais vers le terminal pour suivre
+  les sessions, tentatives de reconnexion et opérations natives.
+- Banc RTSP synthétique local pour reproduire les coupures et vérifier la reprise
+  vidéo, le retour du débit, la réactivité de l'interface et l'arrêt des processus.
+
+Résultats des tests et limites : docs/player-recovery-results.md.
+Guide de diagnostic et de test : docs/player-recovery.md.
