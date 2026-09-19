@@ -232,7 +232,8 @@ class WindowPlacement:
         self.worker = PlacementWorker(camera_id, fallback, path=path, screen_provider=screen_provider)
         self.token = None
         self.screens = fallback
-        self.last = None
+        self.last = self._geometry()
+        self.user_placed = False
         self.settling = False
         self.stopping = False
         self.close_deadline = None
@@ -243,12 +244,14 @@ class WindowPlacement:
         return (self.root.winfo_width(), self.root.winfo_height(),
                 self.root.winfo_x(), self.root.winfo_y())
 
-    def _place(self, position):
-        width, height, _, _ = self._geometry()
+    def _fit(self, position, size):
         border = max(0, self.root.winfo_rootx() - self.root.winfo_x())
         title = max(0, self.root.winfo_rooty() - self.root.winfo_y())
-        geometry = visible_geometry(self.camera_id, position, (width, height), self.screens,
-                                    (border*2, title+border))
+        return visible_geometry(self.camera_id, position, size, self.screens,
+                                (border*2, title+border))
+
+    def _place(self, position):
+        geometry = self._fit(position, self._geometry()[:2])
         w, h, x, y = geometry
         # '+-1920' is an absolute negative origin. '-1920' anchors to the right.
         self.root.geometry(f'{w}x{h}+{x}+{y}')
@@ -256,22 +259,34 @@ class WindowPlacement:
         self.settling = True
 
     def _sample(self):
-        if self.token is None or self.root.state() != 'normal':
+        state = self.root.state()
+        if state in ('zoomed', 'iconic'):
+            self.user_placed = True
+        if state != 'normal':
             return
         geometry = self._geometry()
-        if self.settling:
-            self.last = geometry
-            self.settling = False
-        elif geometry != self.last:
-            if self.last is not None and geometry[:2] != self.last[:2]:
-                previous_position = self.last[2:]
-                self._place(geometry[2:])
-                if self.last[2:] != previous_position:
-                    self.worker.save(self.token, self.last[2:])
-                return
-            if self.last is None or geometry[2:] != self.last[2:]:
+        self.settling = False
+        if geometry != self.last:
+            # Observe Windows Snap / manual resize without rewriting geometry.
+            # Even a no-op wm geometry call can undo the shell's snapped state.
+            self.user_placed = True
+            if self.token is not None and geometry[2:] != self.last[2:]:
                 self.worker.save(self.token, geometry[2:])
             self.last = geometry
+
+    def resize_for_video(self, width, height):
+        """Initial aspect ratio is optional once Windows/the user chose a layout."""
+        self._sample()  # Catch a Snap occurring between placement polls.
+        if self.user_placed:
+            return
+        current = self._geometry()
+        w, h, x, y = self._fit(current[2:], (width, height))
+        value = f'{w}x{h}'
+        if (x, y) != current[2:]:
+            value += f'+{x}+{y}'
+        self.root.geometry(value)
+        self.last = (w, h, x, y)
+        self.settling = True
 
     def _poll(self):
         self.timer = None
@@ -280,10 +295,17 @@ class WindowPlacement:
             update = self.worker.updates.get_nowait()
         if update is not None:
             previous = self.token
+            if previous is None:
+                self._sample()
             self.token, self.screens, position = update
-            if previous is not None and self.root.state() in ('iconic', 'zoomed'):
-                self.root.state('normal')
-            self._place(position)
+            if previous is None and self.user_placed:
+                # A slow initial disk/display query must not undo an early Snap.
+                if self.root.state() == 'normal':
+                    self.worker.save(self.token, self._geometry()[2:])
+            else:
+                if previous is not None and self.root.state() in ('iconic', 'zoomed'):
+                    self.root.state('normal')
+                self._place(position)
         else:
             self._sample()
         self.timer = self.root.after(100, self._poll)

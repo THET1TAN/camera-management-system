@@ -333,10 +333,78 @@ class TkPlacementTests(unittest.TestCase):
     def test_video_resize_is_fitted_without_changing_native_surface(self):
         placement = self.placement()
         hwnd = self.root.winfo_id()
-        self.root.geometry('800x1400+1600+800')
+        placement.resize_for_video(800, 1400)
         self.pump_until(lambda: self.root.winfo_height() < 1040 and not placement.settling)
         self.assertEqual(self.root.winfo_id(), hwnd)
         self.assertLessEqual(self.root.winfo_rooty()+self.root.winfo_height(), 1040)
+
+    def test_snap_resize_is_observed_without_rewriting_windows_geometry(self):
+        placement = self.placement()
+        # Snap can put its invisible resize border beyond the work-area edge.
+        self.root.geometry('958x1008+-7+0')
+        self.root.update()
+        snapped = placement._geometry()
+        with patch.object(self.root, 'geometry', wraps=self.root.geometry) as geometry:
+            self.pump_until(lambda: placement.last == snapped)
+            for _ in range(5):
+                placement._sample()
+            geometry.assert_not_called()
+        self.assertTrue(placement.user_placed)
+        self.pump_until(lambda: PositionStore(self.path).read(1)[1] is not None)
+        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (-7, 0))
+
+    def test_early_snap_is_preserved_when_initial_display_query_finishes(self):
+        entered, release = threading.Event(), threading.Event()
+        def slow_screens():
+            entered.set()
+            release.wait(2)
+            return SCREENS
+        placement = WindowPlacement(self.root, '1', path=self.path, screen_provider=slow_screens)
+        self.placements.append(placement)
+        try:
+            self.assertTrue(entered.wait(1))
+            self.root.geometry('958x1008+-7+0')
+            self.root.update()
+            snapped = placement._geometry()
+            with patch.object(self.root, 'geometry', wraps=self.root.geometry) as geometry:
+                release.set()
+                self.pump_until(lambda: placement.token is not None)
+                geometry.assert_not_called()
+            self.assertEqual(placement._geometry(), snapped)
+        finally:
+            release.set()
+
+    def test_snap_just_after_restore_is_not_lost_during_settling(self):
+        placement = self.placement()
+        placement._place(None)
+        self.root.update()
+        self.root.geometry('958x1008+-7+0')
+        self.root.update()
+        with patch.object(self.root, 'geometry', wraps=self.root.geometry) as geometry:
+            placement.resize_for_video(800, 490)
+            geometry.assert_not_called()
+        self.assertTrue(placement.user_placed)
+
+    def test_reset_still_recovers_a_snapped_window(self):
+        placement = self.placement()
+        self.root.geometry('958x1008+-7+0')
+        self.root.update()
+        self.pump_until(lambda: placement.user_placed)
+        PositionStore(self.path).reset()
+        self.pump_until(lambda: placement.token[0] == 1 and not placement.settling)
+        self.assertGreaterEqual(self.root.winfo_x(), 0)
+        self.assertLessEqual(self.root.winfo_rooty()+self.root.winfo_height(), 1040)
+        self.assertIsNone(PositionStore(self.path).read(1)[1])
+
+    def test_ordinary_resize_and_close_never_correct_user_geometry(self):
+        placement = self.placement()
+        self.root.geometry('680x430+340+220')
+        self.root.update()
+        with patch.object(self.root, 'geometry', wraps=self.root.geometry) as geometry:
+            placement.close()
+            geometry.assert_not_called()
+        self.assertTrue(placement.worker.closed.wait(2))
+        self.assertEqual(PositionStore(self.path).read(1)[1][1:], (340, 220))
 
     def test_destroy_stops_worker_and_cancels_poll(self):
         placement = self.placement()

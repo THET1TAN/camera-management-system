@@ -87,6 +87,37 @@ class PlayerPresentationTests(unittest.TestCase):
         self.assertEqual(self.app.root.title(), 'Camera presentation')
         self.owner.set_audio.assert_called_with(False, 100)
 
+    def test_first_video_does_not_undo_snap_before_first_image(self):
+        self.app.root.deiconify()
+        self.app.root.geometry('958x1008+-7+0')
+        self.app.root.update_idletasks()
+        snapped = self.app.placement._geometry()
+        with patch.object(self.app.root, 'geometry', wraps=self.app.root.geometry) as geometry:
+            self.owner.snapshot = PlayerSnapshot(state='PLAYING', width=1920, height=1080)
+            self.poll_status()
+            geometry.assert_not_called()
+        self.assertEqual(self.app.placement._geometry(), snapped)
+        self.assertTrue(self.app._sized)
+
+    def test_first_video_preserves_maximized_window(self):
+        self.app.root.deiconify()
+        self.app.root.state('zoomed')
+        self.app.root.update_idletasks()
+        with patch.object(self.app.root, 'geometry', wraps=self.app.root.geometry) as geometry:
+            self.owner.snapshot = PlayerSnapshot(state='PLAYING', width=1920, height=1080)
+            self.poll_status()
+            geometry.assert_not_called()
+        self.assertEqual(self.app.root.state(), 'zoomed')
+
+    def test_first_video_does_not_resize_while_user_is_placing_window(self):
+        self.app.root.deiconify()
+        self.app.root.geometry('+340+220')
+        self.app.root.update_idletasks()
+        with patch.object(self.app.root, 'geometry', wraps=self.app.root.geometry) as geometry:
+            self.owner.snapshot = PlayerSnapshot(state='PLAYING', width=1920, height=1080)
+            self.poll_status()
+            geometry.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -100,7 +100,8 @@ class VideoPlayer:
         if live:
             if not self._sized and snapshot.width and snapshot.height:
                 self._sized = True
-                self.root.geometry(f'800x{int(800*snapshot.height/snapshot.width)+self.CONTROL_BAR_HEIGHT}')
+                self.placement.resize_for_video(
+                    800, int(800*snapshot.height/snapshot.width)+self.CONTROL_BAR_HEIGHT)
             self.status_label.place_forget()
         else:
             text = 'Connecting…' if snapshot.generation <= 1 and snapshot.attempt == 0 else 'Stream unavailable · reconnecting…'
