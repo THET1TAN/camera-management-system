@@ -1,4 +1,5 @@
 import importlib
+from concurrent.futures import Future
 import sys
 import unittest
 from unittest.mock import Mock, patch
@@ -31,6 +32,8 @@ class ViewerHealthTests(unittest.TestCase):
     def tearDown(self):
         if self.app.health_after is not None:
             self.root.after_cancel(self.app.health_after)
+        if self.app.reset_after is not None:
+            self.root.after_cancel(self.app.reset_after)
         self.root.destroy()
         for item in reversed(self.patches):
             item.stop()
@@ -89,6 +92,41 @@ class ViewerHealthTests(unittest.TestCase):
         self.assertEqual(buttons, ['Play', 'PTZ'])
         self.assertLess(frame.winfo_reqwidth() + 95, 450)
         self.assertEqual(self.app.manage_button.cget('text'), 'Manage Cameras')
+        self.assertEqual(self.app.reset_positions_button.cget('text'),
+                         'Réinitialiser la position des fenêtres')
+        self.assertLess(self.app.reset_positions_button.winfo_reqwidth(), 450)
+
+    def test_reset_button_stays_nonblocking_and_disables_duplicate_requests(self):
+        future = Future()
+        with patch.object(self.viewer, 'reset_positions', return_value=future) as reset:
+            self.app.reset_positions_button.invoke()
+            self.app.reset_window_positions()
+            reset.assert_called_once_with()
+        self.assertEqual(self.app.reset_positions_button.cget('state'), 'disabled')
+        future.set_result(True)
+        self.root.after_cancel(self.app.reset_after)
+        self.app._poll_position_reset()
+        self.assertEqual(self.app.reset_positions_button.cget('state'), 'normal')
+        self.assertIsNone(self.app.reset_task)
+
+    def test_reset_failure_is_reported_without_sensitive_exception_details(self):
+        future = Future()
+        future.set_result(False)
+        with patch.object(self.viewer, 'reset_positions', return_value=future), \
+                patch.object(self.viewer.messagebox, 'showwarning') as warning:
+            self.app.reset_window_positions()
+            self.root.after_cancel(self.app.reset_after)
+            self.app._poll_position_reset()
+        warning.assert_called_once()
+        self.assertEqual(self.app.reset_positions_button.cget('state'), 'normal')
+
+    def test_close_during_reset_keeps_cascading_shutdown(self):
+        with patch.object(self.viewer, 'reset_positions', return_value=Future()), \
+                patch.object(self.app.children, 'close') as close:
+            self.app.reset_window_positions()
+            self.app.on_closing()
+        close.assert_called_once()
+        self.assertIsNone(self.app.reset_after)
 
     def test_summary_covers_all_cameras_without_hover_or_expanding_the_footer(self):
         cameras = [(i, 'camera', 'user', b'ciphertext', 1) for i in (1, 2, 3)]

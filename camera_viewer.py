@@ -8,6 +8,7 @@ from camera_health import CameraTarget, load_overrides
 from camera_health_monitor import HealthMonitor
 from child_processes import ChildProcesses, parent_lifetime
 from camera_key import load_encryption_key
+from window_positions import reset_positions
 
 # Keep the installation key outside the published source files.
 ENCRYPTION_KEY = load_encryption_key(os.path.dirname(__file__))
@@ -73,6 +74,8 @@ class CameraViewer:
         self.health_updates = {}
         self.health_after = None
         self.managers = []
+        self.reset_task = None
+        self.reset_after = None
         parent_lifetime.bind(root, self.on_closing)
         
         self.root.grid_rowconfigure(0, weight=1)
@@ -111,6 +114,10 @@ class CameraViewer:
                                      command=self.open_camera_manager,
                                      cursor="hand2")
         self.manage_button.grid(row=0, column=0)
+        self.reset_positions_button = tk.Button(button_frame,
+            text="Réinitialiser la position des fenêtres", cursor="hand2",
+            command=self.reset_window_positions)
+        self.reset_positions_button.grid(row=1, column=0, pady=(5, 0))
         
         self.root.bind('<Up>', self.navigate_up)
         self.root.bind('<Down>', self.navigate_down)
@@ -257,7 +264,29 @@ class CameraViewer:
         if process is not None:
             self.managers.append(process)
 
+    def reset_window_positions(self):
+        if self.children.closing or self.reset_task is not None:
+            return
+        self.reset_positions_button.config(state=tk.DISABLED)
+        self.reset_task = reset_positions()
+        self.reset_after = self.root.after(50, self._poll_position_reset)
+
+    def _poll_position_reset(self):
+        self.reset_after = None
+        if not self.reset_task.done():
+            self.reset_after = self.root.after(50, self._poll_position_reset)
+            return
+        success = self.reset_task.result()
+        self.reset_task = None
+        self.reset_positions_button.config(state=tk.NORMAL)
+        if not success:
+            messagebox.showwarning("Position des fenêtres",
+                "Impossible de réinitialiser les positions enregistrées. Réessayez.")
+
     def on_closing(self):
+        if self.reset_after is not None:
+            self.root.after_cancel(self.reset_after)
+            self.reset_after = None
         if self.health_after is not None:
             self.root.after_cancel(self.health_after)
             self.health_after = None

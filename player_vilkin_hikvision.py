@@ -7,13 +7,14 @@ import tkinter as tk
 from child_processes import parent_lifetime
 from player_supervisor import PlayerSupervisor, PlayerSettings
 from player_diagnostics import StackCapture
+from window_positions import WindowPlacement
 
 
 class VideoPlayer:
     CONTROL_BAR_HEIGHT = 40
 
     def __init__(self, camera_id, camera_ip='', username='', password='', *, uri=None,
-                 settings=None, supervisor_factory=PlayerSupervisor):
+                 settings=None, supervisor_factory=PlayerSupervisor, placement_factory=WindowPlacement):
         settings = settings or PlayerSettings.from_environment()
         self.root = tk.Tk()
         self.base_title = f'Camera {camera_id}'
@@ -69,6 +70,7 @@ class VideoPlayer:
         self._dumps.arm()
         self._timer = self.root.after(100, self.check_stream_status)
         self._bitrate_timer = self.root.after(1000, self.update_bitrate)
+        self.placement = placement_factory(self.root, camera_id)
 
     def toggle_mute(self):
         if self.closing:
@@ -123,6 +125,7 @@ class VideoPlayer:
         if self.closing:
             return
         self.closing = True
+        self.placement.close()
         if self._timer is not None:
             self.root.after_cancel(self._timer)
             self._timer = None
@@ -135,7 +138,7 @@ class VideoPlayer:
 
     def _finish_close(self):
         # Keep the HWND alive until its native session is reaped. No join on Tk.
-        if self.supervisor.closed.is_set():
+        if self.supervisor.closed.is_set() and self.placement.finished():
             self._dumps.close()
             self.root.destroy()
         else:

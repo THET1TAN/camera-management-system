@@ -19,6 +19,7 @@ class PlayerPresentationTests(unittest.TestCase):
 
     def tearDown(self):
         self.app.on_closing()
+        self.app.root.mainloop()  # Drain the asynchronous final position write.
         del self.app
         gc.collect()
 
