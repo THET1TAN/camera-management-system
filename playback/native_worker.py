@@ -57,7 +57,7 @@ def run(config, commands):
         if parts.scheme != 'http' or parts.hostname != '127.0.0.1' or parts.username is not None:
             raise ValueError
         import vlc
-        emit(kind='runtime', python=sys.version.split()[0], python_vlc=vlc.__version__,
+        emit(kind='runtime', executable=sys.executable, python=sys.version.split()[0], python_vlc=vlc.__version__,
              libvlc=vlc.libvlc_get_version().decode(errors='replace'))
         instance = call('create', vlc.Instance, '--no-video-title-show', '--verbose=-1',
             '--network-caching=500', '--file-caching=300', '--avcodec-threads=2',

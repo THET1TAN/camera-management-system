@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from .model import Recording, SearchResult, PlaybackError, check_cancel, iso_utc, parse_time
 from .transport import Transport, xml_body
+from .diagnostics import ProtocolTrace
 
 
 def fingerprint(*values):
@@ -20,11 +21,22 @@ def fingerprint(*values):
 class Backend:
     name = ''
 
-    def __init__(self, camera, transport=None):
+    def __init__(self, camera, transport=None, diagnostic=None):
         self.camera = camera
-        self.http = transport or Transport(camera)
+        self.trace = ProtocolTrace(camera, self.name, diagnostic)
+        self.http = transport or Transport(camera, self.trace)
+        self.http.trace = self.trace
         self.device = ''
         self.tracks = ()
+        self.track_info = ()
+        self.attempts = ()
+
+    def read_xml(self, stage, method, endpoint, cancel, roots=(), **kwargs):
+        self.trace.begin(stage, method, endpoint)
+        try:
+            return xml_body(self.http.read(method, endpoint, cancel, **kwargs), roots, self.trace)
+        except PlaybackError as exc:
+            raise self.trace.reject(exc)
 
     def close(self):
         self.http.close()
@@ -41,99 +53,131 @@ class IsapiBackend(Backend):
     name = 'isapi'
 
     def probe(self, cancel):
-        info = xml_body(self.http.read('GET', '/ISAPI/System/deviceInfo', cancel), ('DeviceInfo',))
+        info = self.read_xml('deviceInfo', 'GET', '/ISAPI/System/deviceInfo', cancel, ('DeviceInfo',))
         identity = info.findtext('serialNumber') or info.findtext('macAddress') or self.camera.revision
         if not identity:
-            raise PlaybackError('device-identity-required')
+            raise self.trace.reject(PlaybackError('device-identity-required'))
         self.device = fingerprint(self.name, identity, info.findtext('model'),
                                   info.findtext('firmwareVersion'), self.camera.revision)
-        root = xml_body(self.http.read('GET', '/ISAPI/ContentMgmt/record/tracks', cancel), ('TrackList',))
-        tracks = []
+        self.trace.report(outcome='accepted')
+        root = self.read_xml('tracks', 'GET', '/ISAPI/ContentMgmt/record/tracks', cancel, ('TrackList',))
+        tracks, details = [], []
         for node in root.findall('.//Track'):
             value = node.findtext('id') or node.findtext('trackID')
             if value and re.fullmatch(r'\d{1,10}', value) and value not in tracks:
                 tracks.append(value)
+                enabled = (node.findtext('Enable') or node.findtext('enable') or '').strip().lower()
+                enabled = enabled if enabled in ('true', 'false', '1', '0') else 'unknown'
+                details.append({'track': value, 'enabled': enabled})
+                self.trace.report(outcome='discovered', returned_track=value, track_enabled=enabled)
         if not tracks:
-            raise PlaybackError('no-recording-track')
+            raise self.trace.reject(PlaybackError('no-recording-track'))
+        if len(tracks) > 128:
+            raise self.trace.reject(PlaybackError('response-limit'))
         self.tracks = tuple(tracks)
+        self.track_info = tuple(details)
         if self.camera.track and self.camera.track not in tracks:
-            raise PlaybackError('track-unavailable')
+            raise self.trace.reject(PlaybackError('track-unavailable'))
         return self
 
     def list_recordings(self, start, end, cancel):
-        records, seen = [], set()
+        records, failures = [], []
         observed = time.time()
-        # Every discovered track is searched unless the user explicitly filters.
-        for track in ((self.camera.track,) if self.camera.track else self.tracks):
-            search_id, position = str(uuid4()), 0
-            for page in range(200):
+        tracks = (self.camera.track,) if self.camera.track else self.tracks
+        completed = 0
+        for track in tracks:
+            try:
+                self._search_track(track, start, end, cancel, observed, records)
+                completed += 1
+            except PlaybackError as exc:
                 check_cancel(cancel)
-                body = ET.Element('CMSearchDescription', version='2.0', xmlns='http://www.std-cgi.com/ver20/XMLSchema')
-                ET.SubElement(body, 'searchID').text = search_id
-                ET.SubElement(ET.SubElement(body, 'trackList'), 'trackID').text = track
-                span = ET.SubElement(ET.SubElement(body, 'timeSpanList'), 'timeSpan')
-                ET.SubElement(span, 'startTime').text = iso_utc(start-self.camera.time_shift)
-                ET.SubElement(span, 'endTime').text = iso_utc(end-self.camera.time_shift)
-                ET.SubElement(body, 'maxResults').text = '50'
-                ET.SubElement(body, 'searchResultPostion').text = str(position)
-                ET.SubElement(ET.SubElement(body, 'metadataList'), 'metadataDescriptor').text = '//recordType.meta.std-cgi.com'
-                root = xml_body(self.http.read('POST', '/ISAPI/ContentMgmt/search', cancel,
-                                               data=ET.tostring(body)), ('CMSearchResult',))
-                status = (root.findtext('responseStatusStrg') or '').upper()
-                if (root.findtext('responseStatus') or '').lower() not in ('true', '1') or status not in ('OK', 'MORE', 'NO MATCHES'):
-                    raise PlaybackError('search-rejected')
-                items = root.findall('.//searchMatchItem')
-                try:
-                    count = int(root.findtext('numOfMatches', '-1'))
-                except ValueError:
-                    raise PlaybackError('invalid-response') from None
-                if count != len(items):
-                    return SearchResult(tuple(records), False, 'pagination-count', observed)
-                added = 0
-                for item in items:
-                    uri = item.findtext('.//playbackURI', '')
-                    if len(uri)>4096:
-                        raise PlaybackError('response-limit')
-                    parts = urlsplit(uri)
-                    # Userinfo is refused instead of being retained in an index or export.
-                    if parts.scheme not in ('rtsp', 'rtsps') or not parts.hostname or parts.username is not None:
-                        raise PlaybackError('invalid-recording-uri')
-                    raw_start, raw_end = item.findtext('.//startTime', ''), item.findtext('.//endTime', '')
-                    a = parse_time(raw_start, self.camera.zone, self.camera.time_shift)
-                    b = parse_time(raw_end, self.camera.zone, self.camera.time_shift)
-                    found_track = item.findtext('trackID', track)
-                    if found_track != track:
-                        raise PlaybackError('invalid-response')
-                    try:
-                        size = int(parse_qs(parts.query).get('size', ['0'])[0])
-                    except ValueError:
-                        raise PlaybackError('invalid-size') from None
-                    record = Recording(self.camera.camera_id, self.device, self.name, track,
-                        uri, a, b, size, uri, raw_start, raw_end, observed)
-                    if record.key not in seen:
-                        seen.add(record.key)
-                        added += 1
-                        if a < end and b > start:
-                            records.append(record)
-                if status != 'MORE':
-                    break
-                if not items or not added:
-                    return SearchResult(tuple(records), False, 'pagination-repeated', observed)
-                position += len(items)
-            else:
-                return SearchResult(tuple(records), False, 'pagination-limit', observed)
+                failures.extend(self.trace.reject(exc).details)
+        if failures:
+            reason = failures[0]['reason'] if len(tracks) == 1 else 'tracks-partial'
+            if not records and not completed and not all(d['reason'].startswith('pagination-') for d in failures):
+                raise PlaybackError(failures[0]['reason'], failures)
+            return SearchResult(tuple(records), False, reason, observed, tuple(failures))
         return SearchResult(tuple(records), True, '', observed)
+
+    def _search_track(self, track, start, end, cancel, observed, records):
+        search_id, position, seen = str(uuid4()), 0, set()
+        for page in range(200):
+            check_cancel(cancel)
+            self.trace.begin('search', 'POST', '/ISAPI/ContentMgmt/search', requested_track=track, page_position=position)
+            body = ET.Element('CMSearchDescription', version='2.0', xmlns='http://www.std-cgi.com/ver20/XMLSchema')
+            ET.SubElement(body, 'searchID').text = search_id
+            ET.SubElement(ET.SubElement(body, 'trackList'), 'trackID').text = track
+            span = ET.SubElement(ET.SubElement(body, 'timeSpanList'), 'timeSpan')
+            ET.SubElement(span, 'startTime').text = iso_utc(start-self.camera.time_shift)
+            ET.SubElement(span, 'endTime').text = iso_utc(end-self.camera.time_shift)
+            ET.SubElement(body, 'maxResults').text = '50'
+            ET.SubElement(body, 'searchResultPostion').text = str(position)
+            ET.SubElement(ET.SubElement(body, 'metadataList'), 'metadataDescriptor').text = '//recordType.meta.std-cgi.com'
+            root = xml_body(self.http.read('POST', '/ISAPI/ContentMgmt/search', cancel,
+                                           data=ET.tostring(body)), ('CMSearchResult',), self.trace)
+            status = (root.findtext('responseStatusStrg') or '').upper()
+            if (root.findtext('responseStatus') or '').lower() not in ('true', '1') or status not in ('OK', 'MORE', 'NO MATCHES'):
+                raise PlaybackError('search-rejected')
+            items = root.findall('.//searchMatchItem')
+            try:
+                count = int(root.findtext('numOfMatches', '-1'))
+            except ValueError:
+                raise PlaybackError('search-count-invalid') from None
+            self.trace.note(announced_count=count, count=len(items))
+            if count != len(items) or (status == 'NO MATCHES' and items):
+                raise PlaybackError('pagination-count')
+            page_records = []
+            for item in items:
+                found_track = item.findtext('trackID', '')
+                self.trace.note(returned_track=found_track)
+                if found_track != track:
+                    raise PlaybackError('track-mismatch')
+                uri = item.findtext('.//playbackURI', '')
+                if len(uri) > 4096:
+                    raise PlaybackError('response-limit')
+                parts = urlsplit(uri)
+                if parts.scheme not in ('rtsp', 'rtsps') or not parts.hostname or parts.username is not None:
+                    raise PlaybackError('invalid-recording-uri')
+                raw_start, raw_end = item.findtext('.//startTime', ''), item.findtext('.//endTime', '')
+                a = parse_time(raw_start, self.camera.zone, self.camera.time_shift)
+                b = parse_time(raw_end, self.camera.zone, self.camera.time_shift)
+                try:
+                    size = int(parse_qs(parts.query).get('size', ['0'])[0])
+                except ValueError:
+                    raise PlaybackError('invalid-size') from None
+                page_records.append(Recording(self.camera.camera_id, self.device, self.name, track,
+                    uri, a, b, size, uri, raw_start, raw_end, observed))
+            added = 0
+            for record in page_records:
+                if record.key not in seen:
+                    seen.add(record.key)
+                    added += 1
+                    if record.start < end and record.end > start:
+                        records.append(record)
+            self.trace.report(outcome='accepted')
+            if status != 'MORE':
+                return
+            if not items or not added:
+                raise PlaybackError('pagination-repeated')
+            position += len(items)
+        raise PlaybackError('pagination-limit')
 
     def download(self, recording, target, cancel, limit, progress):
         if recording.device != self.device:
             raise PlaybackError('device-changed')
         body = ET.Element('downloadRequest')
         ET.SubElement(body, 'playbackURI').text = recording.locator
-        return self.http.download('GET', '/ISAPI/ContentMgmt/download', target, cancel,
-                                  limit, progress, data=ET.tostring(body))
+        self.trace.begin('download', 'GET', '/ISAPI/ContentMgmt/download', requested_track=recording.track)
+        try:
+            received = self.http.download('GET', '/ISAPI/ContentMgmt/download', target, cancel,
+                                          limit, progress, data=ET.tostring(body))
+            self.trace.report(outcome='accepted')
+            return received
+        except PlaybackError as exc:
+            raise self.trace.reject(exc)
 
 
-def cgi_items(data):
+def cgi_items(data, trace=None):
     """Accept the observed item records in XML or JSON; refuse HTML/login bodies."""
     if data.lstrip().startswith((b'{', b'[')):
         try:
@@ -149,9 +193,11 @@ def cgi_items(data):
             return items, more
         except (ValueError, TypeError):
             raise PlaybackError('invalid-response') from None
-    root = xml_body(data)
-    if root.tag.lower() in ('html', 'uid', 'fault', 'error'):
-        raise PlaybackError('invalid-response')
+    root = xml_body(data, trace=trace)
+    if root.tag == 'uid':
+        raise PlaybackError('authentication-failed')
+    if root.tag.lower() in ('fault', 'error', 'responsestatus'):
+        raise PlaybackError('camera-application-error')
     nodes = [root] if root.tag in ('item', 'items') else root.findall('.//item')
     if not nodes and root.tag == 'RecordQueryInfo':
         nodes = root.findall('items')
@@ -167,12 +213,14 @@ class VideoLinkBackend(Backend):
     name = 'videolink'
 
     def login(self, cancel):
-        root = xml_body(self.http.read('GET', '/cgi-bin/getuid', cancel,
-            params={'username': self.camera.username, 'password': self.camera.password}), ('uid',))
+        root = self.read_xml('getuid', 'GET', '/cgi-bin/getuid', cancel, ('uid',),
+            params={'username': self.camera.username, 'password': self.camera.password})
         uid = (root.text or root.get('value') or root.findtext('value') or '').strip()
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,256}', uid) or uid.lower() in ('0', '-1', 'error', 'false', 'null'):
-            raise PlaybackError('authentication-failed')
+            raise self.trace.reject(PlaybackError('authentication-failed'))
         self.uid = uid
+        self.trace.protect(uid)
+        self.trace.report(outcome='accepted')
 
     def probe(self, cancel):
         self.login(cancel)
@@ -180,6 +228,7 @@ class VideoLinkBackend(Backend):
         # ONVIF serial if possible, otherwise require an explicit local revision.
         identity = self.camera.revision
         if not identity:
+            self.trace.begin('identity', 'POST', '/onvif/device_service')
             try:
                 from camera_health import CameraTarget, DEVICE, soap_request
                 endpoint = self.http.base + '/onvif/device_service'
@@ -188,29 +237,38 @@ class VideoLinkBackend(Backend):
                 root = soap_request(endpoint, target, DEVICE+'/GetDeviceInformation',
                     f'<tds:GetDeviceInformation xmlns:tds="{DEVICE}"/>', 3., cancel)
                 values = {node.tag.rsplit('}', 1)[-1]: node.text for node in root.iter()}
+                self.trace.note(xml_root=root.tag.rsplit('}', 1)[-1],
+                    xml_namespace=root.tag[1:].split('}', 1)[0] if root.tag.startswith('{') else '')
                 if values.get('SerialNumber'):
                     identity = '|'.join(values.get(k) or '' for k in ('Manufacturer', 'Model', 'SerialNumber', 'FirmwareVersion'))
             except Exception:
                 check_cancel(cancel)
+                self.trace.report(outcome='rejected', reason='identity-probe-failed')
         if not identity:
-            raise PlaybackError('device-identity-required')
+            raise self.trace.reject(PlaybackError('device-identity-required'))
         self.device = fingerprint(self.name, identity, self.camera.revision)
+        self.trace.report(outcome='accepted')
         return self
 
     def _day(self, day, cancel):
         for attempt in range(2):
+            self.trace.begin('record_query', 'GET', '/cgi-bin/get_record_query')
             try:
-                return cgi_items(self.http.read('GET', '/cgi-bin/get_record_query', cancel,
+                result = cgi_items(self.http.read('GET', '/cgi-bin/get_record_query', cancel,
                     params={'year': day.year, 'month': day.month, 'day': day.day,
-                            'stream': -1, 'record_mode': -1, 'media_type': 3, 'uid': self.uid}))
+                            'stream': -1, 'record_mode': -1, 'media_type': 3, 'uid': self.uid}), self.trace)
+                self.trace.report(outcome='accepted', count=len(result[0]))
+                return result
             except PlaybackError as exc:
-                if attempt or exc.code not in ('authentication-failed', 'invalid-response'):
+                self.trace.reject(exc)
+                if attempt or exc.code not in ('authentication-failed', 'html-login-page'):
                     raise
                 self.login(cancel)
 
     def list_recordings(self, start, end, cancel):
         if not self.camera.zone:
-            raise PlaybackError('timezone-required')
+            self.trace.begin('camera_timezone')
+            raise self.trace.reject(PlaybackError('timezone-required'))
         zone = ZoneInfo(self.camera.zone)
         first = datetime.fromtimestamp(start-self.camera.time_shift, zone).date()-timedelta(days=1)
         last = datetime.fromtimestamp(end-1-self.camera.time_shift, zone).date()
@@ -262,29 +320,36 @@ class VideoLinkBackend(Backend):
         if recording.device != self.device:
             raise PlaybackError('device-changed')
         for attempt in range(2):
+            self.trace.begin('download', 'GET', '/playback/<recording>', requested_track=recording.track)
             try:
-                return self.http.download('GET', recording.locator, target, cancel,
+                received = self.http.download('GET', recording.locator, target, cancel,
                     limit, progress, params={'uid': self.uid})
+                self.trace.report(outcome='accepted')
+                return received
             except PlaybackError as exc:
+                self.trace.reject(exc)
                 if attempt or exc.code not in ('authentication-failed', 'invalid-media-response'):
                     raise
                 self.login(cancel)
 
 
-def connect(camera, cancel):
+def connect(camera, cancel, diagnostic=None):
     candidates = {'isapi': IsapiBackend, 'videolink': VideoLinkBackend}
     names = (camera.backend,) if camera.backend != 'auto' else ('isapi', 'videolink')
     errors = []
     for name in names:
-        backend = candidates[name](camera)
+        backend = candidates[name](camera, diagnostic=diagnostic)
         try:
-            return backend.probe(cancel)
+            backend.probe(cancel)
+            backend.attempts = tuple(errors)
+            backend.trace.report(outcome='selected')
+            return backend
         except PlaybackError as exc:
             backend.close()
-            errors.append(exc.code)
+            errors.extend(exc.details or (backend.trace.report(outcome='rejected', reason=exc.code),))
             check_cancel(cancel)
     # Retain actionable failures rather than permanently caching 'unsupported'.
     for reason in ('device-identity-required', 'authentication-failed', 'temporarily-unreachable'):
-        if reason in errors:
-            raise PlaybackError(reason)
-    raise PlaybackError(errors[-1] if errors else 'unsupported')
+        if any(item['reason'] == reason for item in errors):
+            raise PlaybackError(reason, errors)
+    raise PlaybackError('backend-detection-failed' if len(names) > 1 else errors[-1]['reason'] if errors else 'unsupported', errors)

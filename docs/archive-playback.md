@@ -48,7 +48,7 @@ arguments. Worker commands contain only local executable/script paths; the
 session configuration is sent through a private pipe.
 
 For VideoLink, **confirm the camera timezone** in Réglages, for example
-`America/Toronto`, then save and reopen the archive window. It is separate from
+`America/Toronto`, then apply the local setting. It is separate from
 the display timezone. `tzdata` supplies IANA zones on Windows. Naive CGI times
 during a repeated/nonexistent hour are rejected explicitly instead of inventing
 a unique UTC instant. Date arithmetic uses 23/24/25-hour days; a known recording
@@ -71,7 +71,10 @@ database IDs. Optional `endpoint` accepts an HTTP(S) origin and port without
 userinfo/path/query. TLS certificate verification remains enabled. `track` can
 restrict a discovered ISAPI track or CGI stream index; an empty field permits
 automatic selection. Different track IDs are not inferred to be different
-physical cameras. Settings apply on reopening Playback.
+physical cameras. Applying settings cancels the previous jobs, waits outside Tk
+for metadata owners to retire, reloads cameras by database ID, and starts a fresh
+search for the selected camera/day. Credentials, keys, original media and exports
+are retained. No archive window restart is required for these settings.
 
 ## Backends and bounded searches
 
@@ -212,6 +215,17 @@ XML structures, asset generation and static source review only. No application,
 camera probe, FFmpeg, VLC, test suite, video or audio has been run. No GUI captures
 or performance measurements of this implementation exist. Historical issue #15
 observations remain observations of earlier prototypes.
+
+**First user trial and follow-up correction:** the user observed configuration
+and generic response errors in the UI. Their test command used a different
+Python and failed to import `cryptography`; it did not execute the tests. The
+subsequent correction preserves successful ISAPI tracks on a secondary failure,
+retains each auto-detection attempt, and adds redacted per-stage protocol traces.
+Track discovery reports `Enable` as information, not proof of archive presence.
+HTML HTTP-200 replies remain rejected. See the
+[diagnostic guide](archive-playback-diagnostics.md) for evidence versus hypotheses,
+the explicit interpreter and sequential, one-day commands. Corrected runtime
+behavior has not yet been validated; no camera was contacted for the correction.
 
 The code includes synthetic unit checks, an optional media fixture generator and
 a separate offline browser mode. All execution results remain **pending the

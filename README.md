@@ -7,8 +7,10 @@ an integrated archive window, camera-badge calendar, timeline, ISAPI/VideoLink
 queries, local cache, progressive MPEG/HLS preparation, playback controls and
 original/range export. The stable **v0.2.10** sources remain in `~v0.2.10`.
 
-**No application or tests have been run for this implementation at the user's
-request.** Camera compatibility, video/audio behavior, joins and responsive/DPI
+**The corrected implementation awaits user-run qualification.** The first user
+trial exposed configuration/response errors; its test command failed before any
+test ran because it used a different Python environment. The assistant has not
+launched the application, tests, cameras or media. Camera compatibility, video/audio behavior, joins and responsive/DPI
 quality and measured export bounds require user-run qualification.
 Cross-archive range export remains outstanding; this is not
 a release or an assertion that issue #15 is complete.
@@ -21,6 +23,7 @@ Opening its calendar does not start a video. Add the
 new `tzdata` dependency using the same Python interpreter as the application.
 See [behavior, design and limits](docs/archive-playback.md) and
 [commands and test sequence](docs/archive-playback-testing.md).
+For the current blockers, start with the [environment and one-camera diagnostics](docs/archive-playback-diagnostics.md).
 
 ## Current release: v0.2.10 — remembered window layout
 

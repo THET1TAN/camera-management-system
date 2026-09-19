@@ -12,14 +12,14 @@ import threading
 import time
 from zoneinfo import ZoneInfo
 
-from .config import ROOT, load_cameras, load_settings
+from .config import ROOT, load_cameras, load_settings, save_settings
 from .engine import Engine
 from .media import probe, prepare, read_segments, growing_chunks, packet_bounds
 from .model import Controls, PlaybackError, Cancelled, check_cancel, day_bounds, covered_days
 from .processes import run
 from .server import SessionServer, Playlist
 from .store import Store
-from .diagnostics import Diagnostics
+from .diagnostics import Diagnostics, safe_fields
 from .remote import RemoteBackend
 
 
@@ -42,7 +42,7 @@ class Controller:
         self.root, self.hwnd = root, hwnd
         self.fixture_directory = fixture_directory
         self.fixture_data = None
-        self.connect_backend = RemoteBackend
+        self.connect_backend = lambda camera, cancel: RemoteBackend(camera, cancel, self._diagnostic)
         self.log = None
         self.status = Status()
         self.controls = Controls()
@@ -51,6 +51,13 @@ class Controller:
         self.entries = ()
         self.calendar = {}
         self.devices = {}
+        self.diagnostic_events = {}
+        self.diagnostic_lock = threading.Lock()
+        self.index_request_lock = threading.Lock()
+        self.index_idle = threading.Event()
+        self.index_idle.set()
+        self.settings_request = None
+        self.configuration_status = ''
         self.ready = threading.Event()
         self.closed = threading.Event()
         self.stop_event = threading.Event()
@@ -69,9 +76,56 @@ class Controller:
         self.thread = threading.Thread(target=self._run, name='Archive coordinator', daemon=True)
         self.thread.start()
 
-    def month(self, year, month, camera_ids, force=False):
-        self.index_cancel.set()
-        self.month_request = (year, month, tuple(camera_ids), bool(force), time.monotonic())
+    def month(self, year, month, camera_ids, force=False, day=None):
+        with self.index_request_lock:
+            if self.configuration_status == 'pending':
+                return
+            self.index_cancel.set()
+            self.month_request = (year, month, tuple(camera_ids), bool(force), time.monotonic(), day)
+
+    def _diagnostic(self, detail):
+        detail = safe_fields(detail)
+        cid = detail.get('camera_id')
+        if cid is None:
+            return
+        with self.diagnostic_lock:
+            history = self.diagnostic_events.get(cid, ())
+            updated = dict(self.diagnostic_events)
+            updated[cid] = (*history[-31:], detail)
+            self.diagnostic_events = updated
+        if self.log:
+            self.log.event('camera-protocol', **detail)
+
+    def apply_settings(self, settings, camera_id, day):
+        """Queue a local reconfiguration; no network/disk/wait in the Tk callback."""
+        with self.index_request_lock:
+            if self.configuration_status == 'pending':
+                return
+            self.stop()
+            self.export_cancel.set()
+            self.configuration_status = 'pending'
+            self.index_cancel.set()
+            self.month_request = None
+            self.settings_request = (settings, camera_id, day)
+
+    def _apply_configuration(self, request):
+        settings, cid, day = request
+        # No old backend may write metadata after new camera settings take effect.
+        while not self.index_idle.wait(.05):
+            check_cancel(self.stop_event)
+        check_cancel(self.stop_event)
+        cameras, _ = load_cameras(settings, self.root)
+        if cid not in {camera.camera_id for camera in cameras}:
+            raise PlaybackError('camera-unavailable')
+        save_settings(settings, self.root)
+        self.settings, self.cameras = settings, cameras
+        self.store.settings = settings
+        self.devices = {}
+        self.store.invalidate_searches(cid)
+        self.configuration_status = 'complete'
+        self.settings_request = None
+        # Start with this camera/day, irrespective of the wider calendar filter.
+        self.month(day.year, day.month, (cid,), force=True, day=day)
 
     def select(self, camera_id, stamp):
         self.serial += 1
@@ -134,9 +188,9 @@ class Controller:
                 known = self.store.search_status(cid, a, b)
                 state = 'unknown'
                 if known:
-                    state = 'empty' if known[1] else 'partial' if known[2] in (
+                    state = 'configuration' if known[2] == 'timezone-required' else 'empty' if known[1] else 'partial' if known[2] in (
                         'cgi-coverage-unconfirmed', 'cgi-result-limit', 'pagination-limit',
-                        'pagination-repeated', 'pagination-count') else 'error'
+                        'pagination-repeated', 'pagination-count', 'tracks-partial') else 'error'
                 states[(cid, day)] = {'state': state, 'checked': known[0] if known else 0.,
                     'reason': known[2] if known else '', 'cached': False, 'present': False}
         for entry in entries:
@@ -147,23 +201,25 @@ class Controller:
                     item['present'] = True
                     if entry.state in ('prepared', 'downloaded', 'preparing'):
                         item['cached'] = True
-                    if item['state'] not in ('error', 'partial'):
+                    if item['state'] not in ('error', 'partial', 'configuration'):
                         item['state'] = 'present' if entry.remote else 'cache'
         self.entries, self.calendar = entries, states
 
     def _index(self):
         previous = None
         while not self.stop_event.wait(.1):
-            request = self.month_request
-            if request is None or request == previous:
-                continue
-            previous = request
-            year, month, ids, force, _ = request
-            cancel = self.index_cancel = threading.Event()
+            with self.index_request_lock:
+                request = self.month_request
+                if request is None or request == previous:
+                    continue
+                previous = request
+                self.index_idle.clear()
+                cancel = self.index_cancel = threading.Event()
+            year, month, ids, force, _, selected_day = request
             backends = {}
             try:
                 self._catalog(year, month, ids)
-                days = [date(year, month, d) for d in range(1, calendar.monthrange(year, month)[1]+1)]
+                days = [selected_day] if selected_day else [date(year, month, d) for d in range(1, calendar.monthrange(year, month)[1]+1)]
                 # Closest day first; no full-history scan, one metadata worker.
                 focus = datetime.fromtimestamp(self.status.position or time.time(), ZoneInfo(self.settings.display_zone)).date()
                 days.sort(key=lambda d: abs((d-focus).days))
@@ -207,8 +263,14 @@ class Controller:
                     self.calendar = {key: dict(value, state='error', reason='index-unavailable')
                                      for key, value in self.calendar.items()}
             finally:
-                for backend in backends.values():
-                    backend.close()
+                try:
+                    for backend in backends.values():
+                        try:
+                            backend.close()
+                        except Exception:
+                            pass  # Ownership close already attempts kill/reap in finally.
+                finally:
+                    self.index_idle.set()
 
     def _find(self, camera, stamp, cancel, backend_holder, exclude=()):
         def candidates():
@@ -572,6 +634,15 @@ class Controller:
             self.ready.set()
             previous = None
             while not self.stop_event.wait(.1):
+                if self.settings_request is not None:
+                    settings_request = self.settings_request
+                    try:
+                        self._apply_configuration(settings_request)
+                    except Cancelled:
+                        break
+                    except Exception:
+                        self.configuration_status = 'configuration-apply-failed'
+                        self.settings_request = None
                 request = self.request
                 if self.export_request and (request is None or request == previous):
                     key = self.export_request[0]
@@ -590,7 +661,8 @@ class Controller:
                 except PlaybackError as exc:
                     self.log.event('error',camera_id=request[1],reason=exc.code)
                     if self.request == request:
-                        self.status = replace(self.status, state='GAP' if exc.code.startswith('no-video') else 'ERROR', reason=exc.code)
+                        state = 'CONFIGURATION' if exc.code == 'timezone-required' else 'GAP' if exc.code.startswith('no-video') else 'ERROR'
+                        self.status = replace(self.status, state=state, reason=exc.code)
                 except Exception:
                     if self.request == request:
                         self.status = replace(self.status, state='ERROR', reason='playback-unavailable')

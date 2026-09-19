@@ -11,8 +11,9 @@ RATES = (.5, 1., 2., 4.)
 
 class PlaybackError(Exception):
     """Only fixed, public error codes cross into the UI or diagnostics."""
-    def __init__(self, code):
+    def __init__(self, code, details=()):
         self.code = code
+        self.details = tuple(details)
         super().__init__(code)
 
 
@@ -130,6 +131,7 @@ class SearchResult:
     complete: bool = False
     reason: str = ''
     observed: float = 0.
+    failures: tuple = ()
 
 
 @dataclass(frozen=True)

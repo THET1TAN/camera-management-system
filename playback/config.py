@@ -72,6 +72,9 @@ def save_settings(settings, root=ROOT):
 def load_cameras(settings, root=ROOT):
     from cryptography.fernet import Fernet
     from camera_key import load_encryption_key
+    if not os.environ.get('CAMERA_ENCRYPTION_KEY') and not (Path(root)/'.camera_encryption.key').is_file():
+        # Playback and diagnostics only reuse an existing installation key.
+        raise PlaybackError('credentials-unavailable')
     cipher = Fernet(load_encryption_key(root))
     def decode(value):
         value = value.encode() if isinstance(value, str) else value

@@ -1,6 +1,9 @@
 # Essais de Playback — à lancer par l’utilisateur
 
-**Aucun de ces tests n’a été exécuté pendant le développement.** Les commandes
+**Les tests de cette correction restent à exécuter par l’utilisateur.** Le premier
+lancement rapporté avec Python 3.14 a échoué à l’import de `cryptography`, avant
+tout test. Le retour de l’interface est documenté dans le
+[guide de diagnostic des blocages](archive-playback-diagnostics.md). Les commandes
 ci-dessous sont à lancer depuis le dossier `Camera`, quand le poste est disponible.
 Ne démarrez pas deux essais vidéo simultanément. Fermez le premier lecteur et
 attendez sa fermeture complète avant de passer à la deuxième caméra.
@@ -12,6 +15,7 @@ variable une fois par terminal, puis la réutiliser dans toutes les commandes :
 
 ```powershell
 $CameraPython = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python39\python.exe'
+& $CameraPython tools/diagnose_playback.py environment
 ```
 
 Ne pas utiliser simplement `python`, qui peut désigner une autre installation.
@@ -28,12 +32,17 @@ la nouvelle dépendance :
 Puis lancer uniquement les nouveaux tests synthétiques, sans caméra ni lecteur :
 
 ```powershell
-& $CameraPython -m unittest discover -s tests -p "test_playback.py" -v
+& $CameraPython -m unittest discover -s tests -p "test_playback*.py" -v
 ```
 
 Ils couvrent les fuseaux/DST, limites de jours, états d’index, pagination,
 réponses CGI observées, chiffrement des locateurs, protection du cache/exports,
-plages HTTP loopback et calculs de playlist. Ils ne valident ni affichage ni son.
+plages HTTP loopback et calculs de playlist. Les nouveaux cas couvrent aussi la
+découverte complète à partir de structures XML expurgées, une seconde piste
+refusée, les deux erreurs en mode auto et l’application du fuseau par ID.
+Ils ne valident ni affichage ni son. Pour les blocages du banc actuel, commencer
+par les [comparaisons caméra/journée/piste](archive-playback-diagnostics.md),
+sans générer de mire ni lancer FFmpeg.
 
 ## Premier essai visuel sans caméra
 
@@ -89,7 +98,9 @@ Ils n’ajoutent pas le dossier de dépendances temporaire `.release-work/test-d
 Choisir ensuite une seule caméra dans les
 filtres et dans la sélection active. En Réglages, confirmer son fuseau pour CGI.
 Si l’identité ne peut pas être découverte, renseigner une révision locale.
-Enregistrer puis fermer/rouvrir Playback. Aucun mot de passe supplémentaire.
+Cliquer Appliquer : le logiciel arrête les anciennes recherches, enregistre le
+réglage local, recharge la caméra par son ID et relance sa journée. Aucune
+réouverture ni saisie de mot de passe n’est nécessaire pour ces réglages.
 
 Choisir une archive **déjà ancienne**, dont l’OSD est connu, puis noter :
 

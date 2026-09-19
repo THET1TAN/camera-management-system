@@ -25,12 +25,26 @@ ACTIONS = {
     'next_record': ('skip-forward-fill', 'Prochain', 'Aller explicitement au prochain enregistrement'),
     'navigation': ('layout-sidebar', 'Calendrier', 'Afficher ou replier le calendrier et les caméras'),
     'cancel': ('x-lg', 'Annuler', 'Annuler l’export en cours'),
-    'apply': ('check2', 'Appliquer', 'Enregistrer les réglages locaux ; rouvrir Enregistrements pour les appliquer'),
+    'apply': ('check2', 'Appliquer', 'Enregistrer les réglages locaux et relancer la recherche de cette caméra/journée'),
     'goto': ('clock', 'Aller', 'Aller à l’heure saisie pour la date sélectionnée'),
 }
 
 ERRORS = {
-    'timezone-required': 'Confirmez le fuseau de cette caméra dans Réglages avant de lire les dates CGI.',
+    'timezone-required': 'Configuration du fuseau caméra requise. Utilisez Configurer dans Détails ; le fuseau d’affichage ne suffit pas.',
+    'configuration-apply-failed': 'Réglages non appliqués complètement. Consultez le fichier playback.json et réessayez ; les identifiants sont conservés.',
+    'backend-detection-failed': 'Détection non aboutie. Consultez dans Détails les étapes ISAPI et CGI ; aucune absence d’archives n’est déduite.',
+    'tracks-partial': 'Couverture partielle : une ou plusieurs pistes ont échoué. Les archives des pistes utilisables sont conservées.',
+    'track-mismatch': 'La piste retournée ne correspond pas à la piste demandée ; consultez les deux valeurs dans Détails.',
+    'search-rejected': 'Recherche refusée par la réponse applicative de la caméra.',
+    'search-count-invalid': 'Le nombre de résultats annoncé n’est pas un entier valide.',
+    'html-error-page': 'La caméra a renvoyé une page HTML d’erreur (f404), même si le statut HTTP est 200.',
+    'html-login-page': 'La caméra a renvoyé une page HTML de connexion.',
+    'html-response': 'Réponse HTML reçue à la place du XML attendu.',
+    'xml-root-unexpected': 'Racine XML inattendue pour cette étape ; consultez la racine et le namespace dans Détails.',
+    'xml-malformed': 'Le corps reçu n’est pas un document XML valide.',
+    'xml-entities-forbidden': 'XML refusé : déclaration DTD ou entité interdite.',
+    'soap-fault': 'La caméra a renvoyé une faute SOAP.',
+    'camera-application-error': 'La caméra a renvoyé un code d’erreur applicatif ; consultez Détails.',
     'timezone-unavailable': 'Base des fuseaux absente. Installez les dépendances, dont tzdata, puis rouvrez Enregistrements.',
     'ambiguous-time': 'Heure répétée lors du changement d’heure : la caméra ne permet pas encore de la désambiguïser.',
     'nonexistent-time': 'Cette heure locale n’existe pas le jour du passage à l’heure d’été.',
@@ -83,7 +97,8 @@ STATES = {'INITIALIZING':'Préparation du lecteur', 'IDLE':'Choisissez une camé
     'STOPPED':'Lecture arrêtée', 'LOADING':'Recherche de l’archive', 'DOWNLOADING':'Téléchargement de l’archive',
     'PREPARING':'Préparation de la vidéo', 'STARTING':'Ouverture du lecteur', 'SEEKING':'Recherche de la position',
     'PLAYING':'Lecture d’archives', 'PAUSED':'En pause', 'BUFFERING':'Mise en mémoire tampon',
-    'ENDED':'Fin de lecture', 'GAP':'Aucune vidéo', 'ERROR':'Lecture indisponible', 'FAILED':'Lecture indisponible'}
+    'ENDED':'Fin de lecture', 'GAP':'Aucune vidéo', 'CONFIGURATION':'Configuration locale requise',
+    'ERROR':'Lecture indisponible', 'FAILED':'Lecture indisponible'}
 
 
 def error_text(reason):

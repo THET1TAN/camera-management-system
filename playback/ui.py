@@ -5,11 +5,12 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta
 import math
 import time
+import sys
 import tkinter as tk
 from tkinter import ttk, filedialog
 from zoneinfo import ZoneInfo
 
-from .config import ROOT, save_settings
+from .config import ROOT
 from .controller import Controller
 from .model import Controls, Viewport, day_bounds, local_candidates, layout_mode
 from .presentation import ACTIONS, COLORS as C, CAMERA_COLORS, STATES, error_text
@@ -17,7 +18,8 @@ from .widgets import Icons, IconButton, Help, styles
 
 MONTHS = ('janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre')
 DAY_STATES = {'unknown':'non interrogé', 'empty':'absence confirmée', 'partial':'recherche partielle',
-              'error':'erreur de recherche', 'present':'présence indexée', 'cache':'cache local'}
+              'error':'erreur de recherche', 'present':'présence indexée', 'cache':'cache local',
+              'configuration':'configuration du fuseau caméra requise'}
 
 
 def frame(parent, color=None, **kwargs):
@@ -30,7 +32,7 @@ def label(parent, text='', *, secondary=False, size=10, **kwargs):
 
 
 class PlaybackWindow:
-    def __init__(self, parent, camera_id=None, on_closed=None, fixture_directory=None):
+    def __init__(self, parent, camera_id=None, on_closed=None, fixture_directory=None, selected_day=None, day_only=False):
         self.window = tk.Toplevel(parent) if parent is not None else tk.Tk()
         self.window.title('Enregistrements — v0.2.11-dev')
         self.window.configure(bg=C['background'])
@@ -41,6 +43,11 @@ class PlaybackWindow:
         self.fixture_directory = fixture_directory
         self.closing = False
         self.initial_camera = camera_id
+        self.initial_day = selected_day
+        self.day_only = day_only
+        self.configuration_snapshot = ''
+        self.diagnostic_snapshot = None
+        self.configuration_links = []
         self.camera_id = camera_id
         self.controller = None
         self.initialized = False
@@ -269,6 +276,8 @@ class PlaybackWindow:
         canvas.bind('<Configure>',lambda e:canvas.itemconfigure(window,width=e.width))
         inner.bind('<Configure>',lambda _e:canvas.config(scrollregion=canvas.bbox('all')))
         self.fields = {}
+        self.settings_identity = label(inner, '', anchor='w', wraplength=270)
+        self.settings_identity.pack(fill='x',padx=10,pady=8)
         for name,title,values in (
             ('backend','API de la caméra active',('auto','isapi','videolink')),
             ('zone','Fuseau caméra confirmé (CGI)',('','America/Toronto','UTC','Europe/Paris')),
@@ -284,7 +293,8 @@ class PlaybackWindow:
         label(inner,'La correction d’heure agit uniquement ici.\nLa caméra et son horloge ne sont pas modifiées.\n\n'
               'Changez la révision après remplacement d’une caméra sans numéro de série détectable.\n'
               'Les mots de passe restent dans la base existante.',secondary=True,justify='left',wraplength=270).pack(fill='x',padx=10,pady=12)
-        self.button(inner,'apply',self.apply_settings,text=True).pack(fill='x',padx=10,pady=8)
+        self.apply_button = self.button(inner,'apply',self.apply_settings,text=True)
+        self.apply_button.pack(fill='x',padx=10,pady=8)
 
     def _start(self):
         self.start_timer = None
@@ -315,6 +325,8 @@ class PlaybackWindow:
             return
         self.zone = settings.display_zone
         self.selected = datetime.now(ZoneInfo(self.zone)).date()
+        if self.initial_day is not None:
+            self.selected = self.initial_day
         if self.controller.fixture_data:
             self.selected = datetime.fromtimestamp(self.controller.fixture_data['recordings'][0]['start'],ZoneInfo(self.zone)).date()
         self.year,self.month = self.selected.year,self.selected.month
@@ -323,10 +335,13 @@ class PlaybackWindow:
         self.camera_choice.config(values=values)
         for value in values:
             self.filter_list.insert('end',value)
-        self.filter_list.selection_set(0,'end')
         self.camera_id = self.initial_camera if self.initial_camera in self.ids else (self.ids[0] if self.ids else None)
         if self.camera_id is not None:
             self.camera_choice.set(f'C{self.camera_id}')
+        if self.initial_camera in self.ids:
+            self.filter_list.selection_set(self.ids.index(self.initial_camera))
+        else:
+            self.filter_list.selection_set(0,'end')
         self.initialized = True
         self.position = day_bounds(self.selected,self.zone)[0]+12*3600
         self.view = Viewport(self.position-900)
@@ -340,6 +355,16 @@ class PlaybackWindow:
             return
         if self.controller.ready.is_set() and not self.initialized:
             self._initialize()
+        configuration = self.controller.configuration_status
+        self.apply_button.set_enabled(configuration != 'pending', 'Application des réglages en cours')
+        if configuration != self.configuration_snapshot:
+            self.configuration_snapshot = configuration
+            if configuration == 'complete':
+                self.zone = self.controller.settings.display_zone
+                self.footer.config(text='Réglages appliqués. Recherche de cette caméra/journée relancée ; aucune réouverture nécessaire.')
+                self._load_fields()
+            elif configuration:
+                self.footer.config(text='Application des réglages en cours…' if configuration == 'pending' else error_text(configuration))
         status = self.controller.view
         if status.camera_id and status.state not in ('IDLE','STOPPED') and not self.dragging:
             self.position = status.position
@@ -379,7 +404,7 @@ class PlaybackWindow:
         self.identity.config(text=f'{prefix} · C{self.camera_id or "—"} · {self.controls.rate:g}× · {shown}')
         self.time_label.config(text=f'{shown}  ·  {self.view.span/60:g} min')
         self.notice.config(text=text.split('\n')[0])
-        self.play_button.set_action('play' if self.controls.paused or status.state in ('IDLE','STOPPED','GAP','ERROR','ENDED') else 'pause')
+        self.play_button.set_action('play' if self.controls.paused or status.state in ('IDLE','STOPPED','GAP','ERROR','CONFIGURATION','ENDED') else 'pause')
         self.original_button.set_enabled(bool(status.key), 'Choisissez et recevez une archive avant de la conserver')
         self.export_button.set_enabled(bool(status.key and self.mark_a is not None and self.mark_b is not None and self.mark_b>self.mark_a),
                                        'Sélectionnez un début A et une fin B dans une archive reçue')
@@ -387,8 +412,9 @@ class PlaybackWindow:
         export = self.controller.export_status
         self.export_label.config(text={'pending':'Export en attente','working':'Export en cours',
             'complete':'Export conservé avec ses métadonnées','cancelled':'Export annulé'}.get(export,error_text(export)))
-        if self.calendar_snapshot is not self.controller.calendar:
+        if self.calendar_snapshot is not self.controller.calendar or self.diagnostic_snapshot is not self.controller.diagnostic_events:
             self.calendar_snapshot = self.controller.calendar
+            self.diagnostic_snapshot = self.controller.diagnostic_events
             self._paint_calendar()
             self._show_details()
         self._draw_timeline()
@@ -399,7 +425,8 @@ class PlaybackWindow:
 
     def _request_month(self,force=False):
         if self.initialized and not self.closing:
-            self.controller.month(self.year,self.month,self.selected_ids(),force)
+            self.controller.month(self.year,self.month,self.selected_ids(),force,
+                                  day=self.selected if self.day_only else None)
 
     def _build_calendar(self):
         self.help.hide()
@@ -449,7 +476,7 @@ class PlaybackWindow:
                                  command=lambda d=day:self.day_details(d))
                 else:
                     kinds=[states.get((cid,day),{}).get('state','unknown') for cid in ids]
-                    symbol='!' if 'error' in kinds else '…' if 'partial' in kinds else '—' if kinds and all(k=='empty' for k in kinds) else '?'
+                    symbol='R' if 'configuration' in kinds else '!' if 'error' in kinds else '…' if 'partial' in kinds else '—' if kinds and all(k=='empty' for k in kinds) else '?'
                     badge.config(text=symbol if n==0 and not present else '',state='normal',bg=C['background'],
                                  command=lambda d=day:self.day_details(d))
 
@@ -463,6 +490,7 @@ class PlaybackWindow:
         if not self.controller:
             return
         lines=[self.selected.strftime('%Y-%m-%d')+' · '+self.zone, '', 'Disponibilités des caméras filtrées']
+        configure_ids=[]
         for cid in self.selected_ids():
             info=self.controller.calendar.get((cid,self.selected),{})
             title=DAY_STATES.get(info.get('state','unknown'),'inconnu')
@@ -471,6 +499,24 @@ class PlaybackWindow:
                 lines.append('  Recherche : '+datetime.fromtimestamp(info['checked'],ZoneInfo(self.zone)).strftime('%d/%m %H:%M'))
             if info.get('reason'):
                 lines.append('  '+error_text(info['reason']))
+            if info.get('reason') == 'timezone-required':
+                configure_ids.append(cid)
+            for detail in self.controller.diagnostic_events.get(cid, ())[-8:]:
+                parts=[str(detail.get('backend','')), str(detail.get('stage',''))]
+                for key in ('method','endpoint','http_status','content_type','received','xml_root','xml_namespace',
+                            'application_code','application_subcode','application_status','requested_track','returned_track','page_position','count','track_enabled','reason',
+                            'python','python_executable_matches_parent'):
+                    if key in detail:
+                        parts.append(f'{key}={detail[key]}')
+                lines.append('  '+' · '.join(parts))
+        lines.extend(('', 'Python Playback : '+sys.executable,
+                      'Processus caméra et lecteur : même interpréteur que Playback.'))
+        if self.controller.engine and self.controller.engine.runtime:
+            runtime=self.controller.engine.runtime
+            lines.append('Lecteur natif observé : Python '+runtime.get('python','?')+' · même interpréteur : '+
+                         str(runtime.get('python_executable_matches_parent')))
+        if self.day_only:
+            lines.append('Recherche limitée à la journée sélectionnée ; les autres dates restent en cache/non interrogées.')
         lines.extend(('', 'Un badge signifie présence indexée, pas une journée complète.',
             'Une durée CGI inconnue apparaît comme un repère ponctuel jusqu’à inspection du média.',
             'Le cache est une copie observée : un fichier caméra peut encore grandir.', '',
@@ -479,8 +525,18 @@ class PlaybackWindow:
         if self.icons.missing:
             lines.append('Ressources d’icônes manquantes : '+', '.join(sorted(self.icons.missing)))
         self.detail_text.config(state='normal')
+        for button in self.configuration_links:
+            button.destroy()
+        self.configuration_links=[]
         self.detail_text.delete('1.0','end')
-        self.detail_text.insert('1.0','\n'.join(lines))
+        for cid in configure_ids:
+            button=self.button(self.detail_text,'settings',lambda c=cid:self.configure_camera(c),text=True,
+                               tip=f'Configurer le fuseau local de C{cid}')
+            button.config(text=f'Configurer le fuseau de C{cid}')
+            self.detail_text.window_create('end',window=button)
+            self.detail_text.insert('end','\n')
+            self.configuration_links.append(button)
+        self.detail_text.insert('end','\n'.join(lines))
         self.detail_text.config(state='disabled')
 
     def select_date(self,day,camera_id=None):
@@ -499,10 +555,14 @@ class PlaybackWindow:
         self._paint_calendar()
         self._show_details()
         self._draw_timeline()
+        if self.day_only:
+            self._request_month()
 
     def change_month(self,delta):
         total=self.year*12+self.month-1+delta
         self.year,self.month=total//12,total%12+1
+        if self.day_only:
+            self.selected=date(self.year,self.month,min(self.selected.day,calendar.monthrange(self.year,self.month)[1]))
         self._build_calendar()
         self._request_month()
 
@@ -515,6 +575,10 @@ class PlaybackWindow:
         except ValueError:
             return
         self._load_fields()
+        if self.day_only and self.camera_id in self.ids:
+            self.filter_list.selection_clear(0,'end')
+            self.filter_list.selection_set(self.ids.index(self.camera_id))
+            self._request_month()
         if self.controller and self.controller.request is not None:
             self.seek(self.position)
 
@@ -543,7 +607,7 @@ class PlaybackWindow:
         status=self.controller.view if self.controller else None
         if status is None:
             return
-        if status.state in ('IDLE','STOPPED','GAP','ERROR','ENDED','FAILED'):
+        if status.state in ('IDLE','STOPPED','GAP','ERROR','CONFIGURATION','ENDED','FAILED'):
             self.controls=replace(self.controls,paused=False)
             self.controller.set_controls(self.controls)
             self.seek(self.position)
@@ -710,11 +774,24 @@ class PlaybackWindow:
             return
         settings=self.controller.settings
         local=settings.cameras.get(str(self.camera_id),{})
+        self.settings_identity.config(text=f'Réglages locaux de C{self.camera_id} · ID de la base enregistrée\n'
+            'Fuseau caméra et fuseau d’affichage sont distincts.')
         defaults={'backend':'auto','zone':'','track':'','revision':'','time_shift':0,
                   'display_zone':settings.display_zone,'cache_gib':settings.cache_gib}
         for name,widget in self.fields.items():
             widget.delete(0,'end')
             widget.insert(0,str(local.get(name,defaults[name])))
+
+    def configure_camera(self, camera_id):
+        self.stop()
+        self.camera_id=camera_id
+        self.camera_choice.set(f'C{camera_id}')
+        if self.day_only and camera_id in self.ids:
+            self.filter_list.selection_clear(0,'end')
+            self.filter_list.selection_set(self.ids.index(camera_id))
+        self._load_fields()
+        self.show_tab(2)
+        self.fields['zone'].focus_set()
 
     def apply_settings(self):
         if self.fixture_directory:
@@ -738,8 +815,8 @@ class PlaybackWindow:
             previous=settings.cameras.get(str(self.camera_id),{})
             settings.cameras[str(self.camera_id)]=dict(previous,backend=values['backend'],zone=values['zone'],
                 track=values['track'],revision=values['revision'],time_shift=shift)
-            save_settings(settings)
-            self.footer.config(text='Réglages enregistrés. Fermez puis rouvrez Enregistrements pour les appliquer.')
+            self.controller.apply_settings(settings,self.camera_id,self.selected)
+            self.footer.config(text='Application des réglages de cette caméra ; la recherche de la journée sera relancée.')
         except Exception:
             self.footer.config(text='Réglages invalides : vérifiez les fuseaux, la correction et le quota.')
 

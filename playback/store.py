@@ -118,6 +118,11 @@ class Store:
             return self.db.execute('SELECT checked,complete,reason,device FROM searches WHERE camera=? AND start=? AND end=?',
                                    (camera, start, end)).fetchone()
 
+    def invalidate_searches(self, camera):
+        """Forget lookup freshness after local settings change; keep all media."""
+        with self.lock, self.db:
+            self.db.execute('DELETE FROM searches WHERE camera=?', (camera,))
+
     def entries(self, camera_ids, start, end):
         if not camera_ids:
             return ()

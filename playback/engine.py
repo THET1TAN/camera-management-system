@@ -29,6 +29,7 @@ class Engine:
         self.hwnd = int(hwnd)
         self.controls = Controls()
         self.snapshot = NativeSnapshot()
+        self.runtime = {}
         self.request = None
         self.seek_request = None
         self.serial = 0
@@ -95,7 +96,10 @@ class Engine:
                     last_message = now
                     if operation == 'boot':
                         operation = None
-                    if message.get('kind') == 'operation':
+                    if message.get('kind') == 'runtime':
+                        self.runtime = {'python': message.get('python', ''),
+                            'python_executable_matches_parent': message.get('executable') == sys.executable}
+                    elif message.get('kind') == 'operation':
                         operation = message.get('name') if message.get('phase') == 'enter' else None
                         entered = now
                     elif message.get('kind') == 'failure':

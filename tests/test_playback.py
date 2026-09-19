@@ -198,6 +198,16 @@ class CacheTests(unittest.TestCase):
         sealed=self.store.db.execute('SELECT sealed FROM recordings').fetchone()[0]
         self.assertNotIn(b'camera.invalid',sealed)
 
+    def test_reconfiguration_invalidates_lookup_freshness_without_losing_cached_media(self):
+        directory=self.store.path(self.record.key)
+        directory.mkdir()
+        (directory/'original.bin').write_bytes(b'cached-original')
+        self.store.state(self.record.key,'prepared',{'duration':120})
+        self.store.invalidate_searches(42)
+        self.assertIsNone(self.store.search_status(42,STAMP,STAMP+3600))
+        self.assertEqual(self.store.entry(self.record.key).state,'prepared')
+        self.assertEqual((directory/'original.bin').read_bytes(),b'cached-original')
+
     def test_changed_device_is_not_current_remote_coverage(self):
         self.store.state(self.record.key,'prepared',{'duration':120})
         newer=recording(device='device-b')
