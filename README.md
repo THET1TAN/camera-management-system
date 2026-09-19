@@ -1,5 +1,24 @@
 # Camera Management System
 
+## Development: v0.2.11-dev — microSD archive playback
+
+Root sources now contain the **unqualified development implementation for issue #15**:
+an integrated archive window, camera-badge calendar, timeline, ISAPI/VideoLink
+queries, local cache, progressive MPEG/HLS preparation, playback controls and
+original/range export. The stable **v0.2.10** sources remain in `~v0.2.10`.
+
+**No application or tests have been run for this implementation at the user's
+request.** Camera compatibility, video/audio behavior, joins and responsive/DPI
+quality and measured export bounds require user-run qualification.
+Cross-archive range export remains outstanding; this is not
+a release or an assertion that issue #15 is complete.
+
+Use **Enregistrements** in Camera Viewer, or `python camera_playback.py` for the
+standalone archive browser. Opening its calendar does not start a video. Add the
+new `tzdata` dependency using the same Python interpreter as the application.
+See [behavior, design and limits](docs/archive-playback.md) and
+[commands and test sequence](docs/archive-playback-testing.md).
+
 ## Current release: v0.2.10 — remembered window layout
 
 Released September 18, 2026, with the changes from
@@ -23,8 +42,8 @@ and maximized/minimized states are not saved. Layout data stays locally in
 `camera_window_positions.db`, separate from camera credentials and excluded from
 Git. See the [window layout guide](docs/window-positions.md) for behavior and limits.
 
-Root sources and [`~v0.2.10`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.10)
-contain this version. See the [v0.2.10 release notes](note_de_version-v0.2.10.txt).
+[`~v0.2.10`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.10)
+preserves this stable version. See the [v0.2.10 release notes](note_de_version-v0.2.10.txt).
 Previous snapshots remain unchanged. No rebuilt executable is included.
 
 ## Previous release: v0.2.9 — nonblocking RTSP recovery

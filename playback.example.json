@@ -1,0 +1,22 @@
+{
+  "display_zone": "America/Toronto",
+  "cache_gib": 8,
+  "free_gib": 2,
+  "ttl_days": 14,
+  "reserve_seconds": 120,
+  "max_archive_gib": 2,
+  "metadata_ttl": 900,
+  "max_index_entries": 20000,
+  "ffmpeg": "ffmpeg",
+  "ffprobe": "ffprobe",
+  "cache_directory": "",
+  "cameras": {
+    "1": {
+      "backend": "auto",
+      "zone": "America/Toronto",
+      "track": "",
+      "revision": "",
+      "time_shift": 0
+    }
+  }
+}
