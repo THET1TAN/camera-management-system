@@ -15,8 +15,6 @@ Nouveautés et corrections
   des images décodées et affichées.
 - Journaux tournants de taille limitée et relais vers le terminal pour suivre
   les sessions, tentatives de reconnexion et opérations natives.
-- Correction du calcul du débit lorsque le compteur VLC dépasse 2 Gio ; un tour
-  complet du compteur réinitialise la mesure sans pic artificiel.
 - Banc RTSP synthétique local pour reproduire les coupures et vérifier la reprise
   vidéo, le retour du débit, la réactivité de l'interface et l'arrêt des processus.
 

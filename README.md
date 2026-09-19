@@ -13,8 +13,6 @@ Released September 18, 2026, through
   an outage; recovery is confirmed by new decoded and displayed frames.
 - **Bounded diagnostics:** rotating logs and terminal output record session
   changes, retry attempts and native operations to help diagnose failures.
-- **Bitrate counter fix:** valid VLC byte counts above 2 GiB no longer leave the
-  display at `-- Mbps`; a full counter rollover starts a new measurement baseline.
 
 Root sources and [`~v0.2.9`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.9)
 contain this version. Older source snapshots remain unchanged. The version
