@@ -22,7 +22,7 @@ def main():
     directory=Path(args.directory).resolve()
     directory.mkdir(parents=True,exist_ok=True)
     if (directory/'fixture.json').exists() or (directory/'fixture.key').exists():
-        parser.error('Ce dossier contient déjà une fixture. Choisissez un nouveau dossier.')
+        parser.error('This directory already contains a fixture. Choose a new directory.')
     zone=ZoneInfo('America/Toronto')
     start=datetime.combine(datetime.now(zone).date(),daytime(12),zone).timestamp()
     recordings=[]
@@ -32,7 +32,7 @@ def main():
             name=f'C{cid}-{number}.mkv'
             path=directory/name
             if path.exists():
-                parser.error('Un média de fixture existe déjà dans ce dossier.')
+                parser.error('A fixture media file already exists in this directory.')
             video=['-c:v','libx264','-preset','ultrafast','-g','48'] if args.codec=='h264' else [
                 '-c:v','libx265','-preset','ultrafast','-x265-params','keyint=48:min-keyint=48:scenecut=0:pools=2']
             run([args.ffmpeg,'-nostdin','-hide_banner','-v','warning','-n',
@@ -42,8 +42,8 @@ def main():
             recordings.append({'camera_id':cid,'file':name,'start':start+offset,'end':start+offset+24})
     (directory/'fixture.key').write_bytes(Fernet.generate_key())
     (directory/'fixture.json').write_text(json.dumps({'zone':'America/Toronto','recordings':recordings},indent=2),encoding='utf-8')
-    print('Fixture créée : deux caméras synthétiques, deux archives jointives puis un trou de 22 secondes.')
-    print('Aucun lecteur lancé. Le son synthétique sera audible uniquement si vous activez le son dans le lecteur.')
+    print('Fixture created: two synthetic cameras, two adjacent archives, then a 22-second gap.')
+    print('No player started. Synthetic audio is audible only if you unmute the player.')
 
 
 if __name__=='__main__':

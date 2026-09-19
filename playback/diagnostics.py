@@ -11,7 +11,8 @@ FIELDS = {'camera_id', 'generation', 'elapsed', 'received', 'count', 'complete',
           'backend', 'stage', 'method', 'endpoint', 'http_status', 'content_type',
           'xml_root', 'xml_namespace', 'application_code', 'application_subcode', 'application_status', 'requested_track',
           'returned_track', 'page_position', 'announced_count', 'track_enabled', 'outcome',
-          'python_executable_matches_parent'}
+          'python_executable_matches_parent', 'container', 'mode', 'seek_id',
+          'target_duration', 'segment_duration', 'reserve', 'preview', 'evidence', 'session_id', 'requested_monotonic'}
 
 ENDPOINTS = {'/ISAPI/System/deviceInfo', '/ISAPI/ContentMgmt/record/tracks',
              '/ISAPI/ContentMgmt/search', '/ISAPI/ContentMgmt/download',

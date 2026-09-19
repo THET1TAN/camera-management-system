@@ -67,7 +67,7 @@ class Process:
                     stream.close()
 
 
-def run(args, cancel, timeout=60, tick=None, limit=2*1024*1024, input_chunks=None):
+def run(args, cancel, timeout=60, tick=None, limit=2*1024*1024, input_chunks=None, allow_early_input_close=False):
     try:
         owned = Process(args, stdin=subprocess.PIPE if input_chunks is not None else None)
     except OSError:
@@ -102,6 +102,11 @@ def run(args, cancel, timeout=60, tick=None, limit=2*1024*1024, input_chunks=Non
                         if not count:
                             raise OSError
                         view = view[count:]
+            except BrokenPipeError:
+                # A bounded metadata probe may finish successfully before reading
+                # the entire supplied snapshot. Media producers still require EOF.
+                if not allow_early_input_close:
+                    feeder_failed.set()
             except Exception:
                 feeder_failed.set()
             finally:

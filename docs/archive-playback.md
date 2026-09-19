@@ -9,7 +9,7 @@ camera configuration and saved live-window positions are not moved or replaced.
 
 ## Starting the browser
 
-In Camera Viewer, select **Enregistrements** or the film icon next to a camera.
+In Camera Viewer, select **Recordings** or the film icon next to a camera.
 Both open the same non-modal archive window with its own embedded video surface.
 The calendar does not start a video. Choose a camera, a day, then click the
 timeline or enter `HH:mm:ss` and select the clock button. The initial viewport
@@ -47,7 +47,7 @@ No camera password, UID, replay URI or camera IP is included in logs or subproce
 arguments. Worker commands contain only local executable/script paths; the
 session configuration is sent through a private pipe.
 
-For VideoLink, **confirm the camera timezone** in Réglages, for example
+For VideoLink, **confirm the camera timezone** in Settings, for example
 `America/Toronto`, then apply the local setting. It is separate from
 the display timezone. `tzdata` supplies IANA zones on Windows. Naive CGI times
 during a repeated/nonexistent hour are rejected explicitly instead of inventing
@@ -110,13 +110,22 @@ do **not** establish camera-side finalization. Observed revisions include native
 identity, reported size and raw bounds. A refreshed growing file can produce a
 new revision; older received bytes are not called the full latest file.
 
-For ISAPI, after a 2 MiB prefix a separate probe checks whether MPEG/MPEG-TS is
-usable progressively. When so, a bounded disk reader feeds received bytes to
-FFmpeg's binary stdin, waits at temporary EOF and closes only at transport EOF.
-The original and HLS output both count toward the quota. If the prefix is not
-usable and nothing was published, the complete-file path remains available.
-MP4/CGI waits for receipt of the complete transport response before preparation;
-no proportional byte seek or unverified HTTP Range resume is used.
+Progressive eligibility depends on received media, not the backend name. A separate
+owned job probes finite prefixes at 256 KiB, 1, 4, 16 and 64 MiB, with at most
+8 seconds per attempt. It requires a supported codec, dimensions and finite
+start timestamps, but no global duration. Insufficient bytes trigger a later
+bounded attempt; HTML/XML/JSON is rejected. Full-file validation still requires
+a positive finite duration at transport completion.
+
+MPEG/MPEG-TS and MP4 with a complete initialization box before media can feed
+FFmpeg through a growing binary pipe. MP4 layouts with media before metadata
+wait for the complete response, with a visible reason. A header is eligibility,
+not proof that every MP4 layout can be streamed: producer failure before any
+publication falls back; failure after publication stops without overwriting
+segments a player may still be reading. Original bytes are retained. No camera
+HTTP Range support or proportional byte seek is assumed. Container/mode/reason
+are logged for each actual transfer; compatibility on each physical camera
+still requires user testing.
 
 The media pipeline copies H.264/HEVC video. AAC is copied; other detected audio is
 converted to AAC for HLS. No audio track is allowed. FFmpeg prepares nominal
@@ -141,14 +150,40 @@ qualification**, not proof of lossless boundaries. Sessions hold at most four
 native archives; a new generation continues at their end with preserved controls.
 This rollover can introduce buffering and must be checked on the actual player.
 
-The initial HLS target duration is fixed at 12 seconds. If a longer GOP produces
-a larger segment, publication waits for finalized preparation, then retires the
-old native owner and rebases into a new playlist generation with the measured
-target duration. This fallback preserves the requested position/controls, but
-may buffer and still needs qualification. Accurate decoding from arbitrary
-keyframe layouts is not certified. Native seeks are accepted only after the
-reported position is within 1.5 seconds and decode/display counters exist; this
-is a bounded confirmation, **not frame-exact positioning**.
+The first public HLS generation uses the ceiling of the longest segment actually
+available. A later longer segment retires the native owner and creates a new
+playlist URL immediately, without waiting for the complete archive. Each public
+URL retains its original TARGETDURATION. Video is copied, segments are cut at
+keyframes, and no independent-segment guarantee is invented. Variable GOPs may
+still cause an interruption; measured durations and generation changes are logged.
+The opening reserve is two viewing seconds with a minimum of two archive seconds
+(8 seconds at 4×), separate from the 120-second comfort reserve.
+
+## Scrubbing and evidence
+
+Timeline motion coalesces the latest target every 125 ms instead of postponing
+all work until release. An independent mailbox services it while downloads or
+preparation block the coordinator. Seeking within prepared coverage reuses the
+same libVLC owner, playlist, producer and download. A target not yet received in
+the same archive waits for its bytes. Dragging outside the current source holds
+an explicitly labelled previous frame; committing that target opens the new
+source once. A distant cold target still waits for sequential reception: an RTSP
+bridge and camera Range support are not implemented.
+
+Preview temporarily mutes and freezes the native player after a confirmed frame;
+it never changes the selected rate, volume or saved pause/mute state. Release
+issues a final target and restores those controls after new decoded/displayed
+counters and a position within one second. Positive cumulative counters from an
+older seek are insufficient. This is native evidence, not frame-exact positioning
+or proof of pixels on screen. Requested and last confirmed preview times are
+shown separately; local seeks keep the stable surface with a small status strip.
+
+English UI text, months, weekday labels, tooltips, errors and CLI help live in
+`playback/presentation.py`. Dates remain YYYY-MM-DD with explicit time zones;
+America/Toronto and DST rules are unchanged. F8 records an explicit user report
+of a visible new frame, including reaction delay. It is distinct from native
+counter events. See the [progressive and scrubbing trial](archive-playback-progressive.md)
+for cold-cache, slowed-transfer and visual qualification commands.
 
 ## Cache, export and shutdown
 
@@ -162,10 +197,10 @@ that policy. An OS lock prevents two windows from mutating the same cache.
 The independent SQLite schema is version 1; unknown newer schemas are refused.
 No migration of the camera-credential database is performed.
 
-**Original** preserves the exact received source bytes plus metadata/SHA-256,
+**Download original** preserves the exact received source bytes plus metadata/SHA-256,
 outside the evictable cache. It is an observed export, not proof of camera-side
 finalization or cryptographic authenticity. No silent overwrite is allowed.
-**A/B → Exporter la plage** remuxes within the currently received native archive
+**A/B → Export selection** remuxes within the currently received native archive
 to MKV, copying video and adapting audio if required. Cross-archive range export
 and frame-exact re-encoding are not yet exposed. The remux preserves packet
 timestamps with an origin at the original archive start; ffprobe measures the
@@ -190,8 +225,9 @@ failure remains distinct from a bounded camera/network or native-operation timeo
 
 Rotating `events.jsonl` in the cache records public event categories, counts,
 bytes, durations and sampled native counters. It contains no request URL, token,
-raw native stderr, exception body or media. Only a transport-completion duration
-is currently measured end-to-end; no displayed-first-frame SLA is claimed.
+raw native stderr, exception body or media. Monotonic milestones distinguish prefix
+analysis, publication, native counter deltas and user-reported screen observations
+(F8). No displayed-first-frame SLA is claimed.
 
 ## Visual assets and distribution
 
@@ -210,28 +246,23 @@ The application performs neither operation. No executable was built or tested.
 
 ## Evidence and remaining acceptance work
 
-**During this implementation:** repository/source comparison, reading of saved
-XML structures, asset generation and static source review only. No application,
-camera probe, FFmpeg, VLC, test suite, video or audio has been run. No GUI captures
-or performance measurements of this implementation exist. Historical issue #15
-observations remain observations of earlier prototypes.
+**Agent verification:** static source review and Python 3.9 syntax inspection only;
+no tests, application, camera request, FFmpeg, VLC, video or audio launched.
 
-**First user trial and follow-up correction:** the user observed configuration
-and generic response errors in the UI. Their test command used a different
-Python and failed to import `cryptography`; it did not execute the tests. The
-subsequent correction preserves successful ISAPI tracks on a secondary failure,
-retains each auto-detection attempt, and adds redacted per-stage protocol traces.
-Track discovery reports `Enable` as information, not proof of archive presence.
-HTML HTTP-200 replies remain rejected. See the
-[diagnostic guide](archive-playback-diagnostics.md) for evidence versus hypotheses,
-the explicit interpreter and sequential, one-day commands. Corrected runtime
-behavior has not yet been validated; no camera was contacted for the correction.
+**User evidence at `4366478`:** all 44 Playback tests passed in 0.547 s under
+Python 3.9.13. C3/101 returns 50 then 14 archives, complete. C3/103 returns
+track 101 and is rejected as `track-mismatch`; auto retains the 64 good records
+with `tracks-partial`. This secondary-track cause is confirmed only for this
+camera and search. These results do not validate progressive start or scrubbing.
 
-The code includes synthetic unit checks, an optional media fixture generator and
-a separate offline browser mode. All execution results remain **pending the
-user's tests**. In particular: camera compatibility, HLS growth/reload,
-0.5/1/2/4×, actual seek time/OSD, dynamic archive joins, long pauses, loss/recovery,
-audio sync, responsive HWND stability and 100/125/150/200% DPI are unvalidated.
+**Current changes:** additional prefix/HLS/seek/UI regressions and an explicit
+slowed-transfer fixture with frame counter are prepared but not run. The
+[progressive trial guide](archive-playback-progressive.md) includes full commands,
+expected evidence and remaining limitations. The native 125 ms seek cadence is
+an implementation limit, not a measured preview frame rate. Physical container
+compatibility, HLS growth, 0.5/1/2/4×, seek latency/OSD, dynamic joins, pauses,
+audio sync, responsive layout and DPI still need user qualification.
+
 Cross-archive range export remains an outstanding implementation item; ranges
 inside one received native archive are supported. The optional RTSP bridge
 and Profile G are not implemented. Keep the issue open and the PR in draft.

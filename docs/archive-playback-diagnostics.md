@@ -9,9 +9,9 @@ différence de contenu, hors fins de ligne. Le checkout Git de la PR était prop
 | Blocage | Cause établie | Ce qui n’est pas encore établi |
 |---|---|---|
 | Import `cryptography` | La première trace venait de Python 3.14 et échouait avant tout test. Le nouvel essai utilisateur utilise Python 3.9.13 64 bits, avec les dépendances présentes, et exécute les 44 tests Playback. | Les dépendances natives de lecture ne sont pas qualifiées par leur seule présence. |
-| Nettoyage du test SQLite sous Windows | 43 tests réussissent ; le dernier termine ses assertions mais échoue à supprimer sa base temporaire (`WinError 32`). Le contexte SQLite valide la transaction sans fermer la connexion du montage de test. La fermeture explicite est maintenant ajoutée avec `closing`. | La relance des 44 tests après correction reste à effectuer par l’utilisateur. Sa base réelle n’est pas impliquée dans cette erreur. |
+| Nettoyage du test SQLite sous Windows | L’essai précédent réussissait 43 tests ; un test terminait ses assertions mais échouait à supprimer sa base temporaire (`WinError 32`). Le contexte SQLite valide la transaction sans fermer la connexion du montage de test. La fermeture explicite est maintenant ajoutée avec `closing`. | La relance utilisateur après correction réussit les 44 tests (0,547 s). La base réelle n’était pas impliquée. |
 | Fuseau CGI | Aucun `playback.json` n’était présent ; `camera.zone` était donc vide. Le fuseau d’affichage ne le remplace pas. Le lien entre ID de base et caméra CGI a été vérifié localement et la confirmation Toronto sauvegardée uniquement pour cet ID. | La corrélation image/heure et les cas DST doivent encore être vérifiés. |
-| Réponses ISAPI/auto | Le code abandonnait tous les résultats lorsqu’une piste suivante levait une erreur, et ne conservait pas toutes les causes de détection. Ces défauts ont été corrigés. L’essai utilisateur sur C3/101 retourne désormais 64 archives pour le 18 septembre 2026, avec `complete=true` et aucune erreur. | La piste 103 et le mode auto restent à comparer ; une erreur de piste secondaire n’est pas une cause terrain confirmée. |
+| Réponses ISAPI/auto | Le code abandonnait tous les résultats lorsqu’une piste suivante levait une erreur, et ne conservait pas toutes les causes de détection. Ces défauts ont été corrigés. L’essai utilisateur sur C3/101 retourne désormais 64 archives pour le 18 septembre 2026, avec `complete=true` et aucune erreur. | La comparaison utilisateur confirme sur C3, pour ce jour, que 103 retourne `trackID=101` : rejet `track-mismatch`. Auto conserve les 64 archives de 101 avec `complete=false` et `tracks-partial`. Ne pas généraliser à tous les modèles. |
 | Namespaces | Le parser retirait déjà les namespaces. Le relevé C3/101 accepte maintenant `DeviceInfo`, `TrackList` et `CMSearchResult` avec le namespace observé `http://www.std-cgi.com/ver20/XMLSchema`. | Un problème de namespace n’est pas démontré par le message générique initial. |
 
 Le relevé utilisateur C3/101 confirme la découverte des pistes 101 et 103,
@@ -47,7 +47,7 @@ Ne pas utiliser simplement `python` ou `pip`. Les lanceurs respectent
 ci-dessus. Playback intégré partage le processus du Viewer. Ses travailleurs
 caméra et libVLC sont créés avec `sys.executable` ; leurs messages indiquent la
 version observée et si l’interpréteur correspond au parent. Ces informations
-sont visibles dans Détails lorsque les processus ont effectivement démarré.
+sont visibles dans Details lorsque les processus ont effectivement démarré.
 
 ## 2. Recherche ciblée, sans vidéo
 
@@ -83,7 +83,7 @@ n’est inventée. Si toutes les pistes échouent, leurs causes restent disponib
 Une réponse vide valide est distinguée d’une réponse invalide.
 
 Pour la caméra CGI, sélectionner son propre ID et confirmer son fuseau dans
-Réglages avant la recherche :
+Settings avant la recherche :
 
 ```powershell
 $CameraId = [int](Read-Host 'ID de la caméra CGI à diagnostiquer')
@@ -111,10 +111,10 @@ choisie est interrogée ; les autres dates restent en cache/non interrogées.
 Choisir une heure réellement listée dans `sample` (convertie dans le fuseau
 d’affichage), puis suivre sélection → téléchargement → préparation → lecture.
 La vidéo ne démarre pas à l’ouverture du calendrier. Pour isoler 101 dans ce
-parcours, choisir localement `isapi` et `101` dans Réglages, puis Appliquer.
+parcours, choisir localement `isapi` et `101` dans Settings, puis Apply.
 
-Le cas « fuseau caméra requis » propose dans Détails un bouton lié à **l’ID
-concerné**. Appliquer sauvegarde localement, arrête les anciens propriétaires,
+Le cas « fuseau caméra requis » propose dans Details un bouton lié à **l’ID
+concerné**. Apply sauvegarde localement, arrête les anciens propriétaires,
 recharge les caméras par ID puis relance cette caméra/journée. Aucune réouverture
 n’est nécessaire pour ce changement et aucune horloge caméra n’est modifiée.
 Une date CGI ambiguë reste refusée ; aucun UTC−4 permanent n’est utilisé.
@@ -137,8 +137,10 @@ d’un téléchargement CGI est remplacé par `/playback/<recording>`. Les codes
 applicatifs inconnus sont indiqués comme non reconnus plutôt que copier une
 chaîne arbitraire. La sonde ONVIF d’identité réutilise le helper existant et
 rapporte seulement sa structure XML/son échec ; ses headers/octets HTTP ne sont
-pas instrumentés. Détails garde 32 événements par caméra et le journal tourne.
+pas instrumentés. Details garde 32 événements par caméra et le journal tourne.
 
 Conserver chaque sortie de comparaison avec l’action effectuée. Ne transmettre
 ni XML brut ni fichier vidéo ni base/clé privée. Un test synthétique réussi ne
 valide pas le parcours réel. La PR reste en brouillon et l’issue ouverte.
+
+Les prochains essais portent sur le [démarrage progressif et le scrubbing](archive-playback-progressive.md). Les 44 tests passés et la comparaison des pistes ne valident pas encore leur ergonomie.

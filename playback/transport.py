@@ -117,8 +117,12 @@ class Transport:
                         check_cancel(cancel)
                         if not chunk:
                             continue
-                        if received == 0 and chunk.lstrip()[:32].lower().startswith((b'<!doctype', b'<html', b'<?xml', b'{')):
-                            raise PlaybackError('invalid-media-response')
+                        if received == 0:
+                            if self.trace:
+                                self.trace.report(stage='first-byte', elapsed=time.monotonic()-began,
+                                                  received=len(chunk), evidence='http-first-chunk')
+                            if chunk.lstrip(b'\xef\xbb\xbf \r\n\t').startswith((b'<', b'{', b'[')):
+                                raise PlaybackError('invalid-media-response')
                         received += len(chunk)
                         if self.trace:
                             self.trace.note(received=received)

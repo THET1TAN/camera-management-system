@@ -7,6 +7,18 @@ import time
 from urllib.parse import urlsplit
 
 
+class FrameGate:
+    """Counters are native evidence, not an observation of pixels on screen."""
+    def __init__(self, target, baseline):
+        self.target, self.baseline = target, baseline
+
+    def accepts(self, position, video):
+        if any(a < b for a, b in zip(video, self.baseline)):
+            self.baseline = video  # Some native inputs reset statistics on seek.
+            return False
+        return abs(position-self.target) <= 1.0 and all(a > b for a, b in zip(video, self.baseline))
+
+
 class Commands:
     def __init__(self, config):
         self.stop = threading.Event()
@@ -70,14 +82,16 @@ def run(config, commands):
         call('attach', player.set_hwnd, config['hwnd'])
         desired = dict(commands.controls)
         # Audio is applied before playback as well as after native initialization.
-        call('audio', player.audio_set_mute, desired['muted'])
+        call('audio', player.audio_set_mute, True)  # Unmute only after the opening frame is confirmed.
         call('audio', player.audio_set_volume, desired['volume'])
         call('rate', player.set_rate, desired['rate'])
         if call('play', player.play) == -1:
             emit(kind='failure', reason='vlc-error')
             return
-        applied, seek_id, opening = None, None, True
+        applied, seek_id, opening = None, 0, True
         seeking, seek_deadline = offset, time.monotonic()+20
+        confirmed_seek, frame_confirmed = 0, False
+        preview, holding, gate = False, False, None
         sought = False
         previous_video = (0, 0)
         last_progress = time.monotonic()
@@ -92,25 +106,34 @@ def run(config, commands):
                 return
             ready = state in (vlc.State.Playing, vlc.State.Paused)
             controls = dict(commands.controls)
-            if ready and (applied != controls or opening):
+            command = commands.seek
+            if command and command['id'] != seek_id:
+                seek_id = command['id']
+                preview = bool(command.get('preview'))
+                holding = command['offset'] is None
+                seeking = None if holding else max(0., command['offset'])
+                seek_deadline, sought, frame_confirmed = time.monotonic()+20, False, False
+                gate = None
+                applied = None
+            effective = dict(controls, muted=controls['muted'] or preview or holding or seeking is not None)
+            if ready and (applied != effective or opening):
                 call('audio', player.audio_set_volume, int(controls['volume']))
-                call('audio', player.audio_set_mute, bool(controls['muted']))
+                call('audio', player.audio_set_mute, bool(effective['muted']))
                 accepted = call('rate', player.set_rate, float(controls['rate']))
                 if accepted == -1:
                     emit(kind='failure', reason='rate-unavailable')
                     return
                 if seeking is None:
-                    call('pause', player.set_pause, int(controls['paused']))
-                applied = controls
+                    call('pause', player.set_pause, int(controls['paused'] or preview or holding))
+                applied = effective
                 opening = False
-            command = commands.seek
-            if command and command['id'] != seek_id:
-                seek_id = command['id']
-                seeking, seek_deadline, sought = max(0., command['offset']), time.monotonic()+20, False
-                if state == vlc.State.Paused:
-                    call('pause', player.set_pause, 0)
             if ready and seeking is not None and not sought:
                 # Do not rely on HLS duration or its default live-edge choice.
+                baseline = vlc.MediaStats()
+                valid_baseline = call('stats', media.get_stats, baseline)
+                gate = FrameGate(seeking, (baseline.decoded_video, baseline.displayed_pictures)
+                                 if valid_baseline else previous_video)
+                call('pause', player.set_pause, 0)
                 call('seek', player.set_time, int(seeking*1000))
                 sought = True
             position = max(0., call('time', player.get_time)/1000)
@@ -121,9 +144,11 @@ def run(config, commands):
                 previous_video = video
                 last_progress = time.monotonic()
             if seeking is not None:
-                if ready and abs(position-seeking) <= 1.5 and video[0] > 0 and video[1] > 0:
+                if ready and gate is not None and valid and gate.accepts(position, video):
                     seeking = None
-                    call('pause', player.set_pause, int(controls['paused']))
+                    confirmed_seek, frame_confirmed = seek_id, True
+                    call('pause', player.set_pause, int(controls['paused'] or preview))
+                    applied = None  # Restore user's mute state only after the new frame.
                 elif time.monotonic() > seek_deadline:
                     emit(kind='failure', reason='seek-unavailable')
                     return
@@ -131,10 +156,11 @@ def run(config, commands):
             if ready and abs(rate-float(controls['rate'])) > .01:
                 emit(kind='failure', reason='rate-unavailable')
                 return
-            label = ('SEEKING' if seeking is not None else 'PAUSED' if controls['paused'] and ready else
+            label = ('SEEKING' if seeking is not None else 'PAUSED' if (controls['paused'] or preview or holding) and ready else
                      'BUFFERING' if not ready or time.monotonic()-last_progress > 2 else 'PLAYING')
             emit(kind='sample', state=label, position=position, rate=rate,
-                 decoded=video[0], displayed=video[1], audio=stats.played_abuffers if valid else 0)
+                 decoded=video[0], displayed=video[1], audio=stats.played_abuffers if valid else 0,
+                 confirmed_seek=confirmed_seek, frame_confirmed=frame_confirmed)
     except Exception:
         emit(kind='failure', reason='native-unavailable')
     finally:

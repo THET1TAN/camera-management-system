@@ -22,10 +22,11 @@ class NativeSnapshot:
     reason: str = ''
     decoded: int = 0
     displayed: int = 0
+    confirmed_seek: int = 0
 
 
 class Engine:
-    def __init__(self, hwnd):
+    def __init__(self, hwnd, event=None):
         self.hwnd = int(hwnd)
         self.controls = Controls()
         self.snapshot = NativeSnapshot()
@@ -33,6 +34,7 @@ class Engine:
         self.request = None
         self.seek_request = None
         self.serial = 0
+        self.event = event or (lambda *_args, **_kwargs: None)
         self.stop_event = threading.Event()
         self.closed = threading.Event()
         self.idle = threading.Event()
@@ -46,11 +48,14 @@ class Engine:
         self.request = (self.serial, url, offset)
         self.idle.clear()
         self.snapshot = NativeSnapshot('STARTING', self.serial)
+        self.event('player-open', generation=self.serial, position=offset)
         return self.serial
 
-    def seek(self, offset):
+    def seek(self, offset, preview=False):
         self.serial += 1
-        self.seek_request = {'id': self.serial, 'offset': max(0., offset)}
+        self.seek_request = {'id': self.serial, 'offset': max(0., offset) if offset is not None else None,
+                             'preview': bool(preview)}
+        return self.serial
 
     def stop(self):
         self.request = None
@@ -73,7 +78,8 @@ class Engine:
         stderr = threading.Thread(target=drain, daemon=True)
         reader.start()
         stderr.start()
-        sent_controls, sent_seek = self.controls, self.seek_request
+        sent_controls, sent_seek = self.controls, None
+        confirmed_frames = set()
         now = time.monotonic()
         operation, entered, last_message = 'boot', now, now
         try:
@@ -110,7 +116,18 @@ class Engine:
                     elif message.get('kind') == 'sample':
                         self.snapshot = NativeSnapshot(message.get('state', 'BUFFERING'), generation,
                             float(message.get('position', 0)), float(message.get('rate', 1)), '',
-                            int(message.get('decoded', 0)), int(message.get('displayed', 0)))
+                            int(message.get('decoded', 0)), int(message.get('displayed', 0)),
+                            int(message.get('confirmed_seek', 0)))
+                        confirmed = self.snapshot.confirmed_seek
+                        latest = self.seek_request
+                        if (message.get('frame_confirmed') and confirmed not in confirmed_frames and
+                                (latest is None or latest['id'] == confirmed)):
+                            confirmed_frames.add(confirmed)
+                            # Keep bounded even during long continuous scrubbing.
+                            confirmed_frames = {confirmed}
+                            self.event('native-new-frame', generation=generation, seek_id=confirmed,
+                                       position=self.snapshot.position, decoded=self.snapshot.decoded,
+                                       displayed=self.snapshot.displayed, evidence='libvlc-counter-delta')
                 if exited:
                     if self.snapshot.state != 'ENDED':
                         self.snapshot = replace(self.snapshot, state='FAILED', reason='native-unavailable')

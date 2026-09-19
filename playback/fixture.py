@@ -1,6 +1,7 @@
 """Explicit offline bench. It never reads camera credentials or contacts a camera."""
 from datetime import datetime
 import json
+import math
 from pathlib import Path
 import threading
 import time
@@ -13,6 +14,9 @@ def load_fixture(directory):
     from cryptography.fernet import Fernet
     directory = Path(directory).resolve()
     data = json.loads((directory/'fixture.json').read_text(encoding='utf-8'))
+    delay = float(data.get('chunk_delay', 0))
+    if not math.isfinite(delay) or not 0 <= delay <= 5:
+        raise PlaybackError('fixture-invalid')
     settings = Settings(cache_directory=str(directory/'cache'),display_zone=data.get('zone','America/Toronto'),free_gib=.25)
     cipher = Fernet((directory/'fixture.key').read_bytes())
     cameras = tuple(Camera(int(cid),'fixture.invalid','','',zone=settings.display_zone) for cid in sorted({str(r['camera_id']) for r in data['recordings']}))
@@ -50,8 +54,11 @@ class FixtureBackend:
             for chunk in iter(lambda:inp.read(256*1024),b''):
                 check_cancel(cancel)
                 out.write(chunk)
+                out.flush()
                 received+=len(chunk)
                 progress(received,size,max(.001,time.monotonic()-began))
+                if cancel.wait(float(self.data.get('chunk_delay', 0))):
+                    check_cancel(cancel)
         return received
 
     def close(self):

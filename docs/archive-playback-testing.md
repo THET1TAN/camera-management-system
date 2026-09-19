@@ -1,17 +1,16 @@
 # Essais de Playback — à lancer par l’utilisateur
 
-**Dernier essai utilisateur sous Python 3.9.13 : 43 tests réussis sur 44.**
-Le seul échec intervient au nettoyage d’une base SQLite temporaire, après les
-assertions. La connexion du montage de test est maintenant fermée explicitement ;
-la relance après cette correction reste à effectuer par l’utilisateur. La première
-trace Python 3.14 échouait à l’import, avant tout test.
+**Dernier essai utilisateur au commit `4366478` : 44 tests sur 44 réussis,
+en 0,547 s, sous Python 3.9.13.** La connexion temporaire SQLite est corrigée.
+La comparaison réelle C3, journée du 18 septembre 2026, confirme 64 archives
+sur 101 ; 103 retourne des éléments `trackID=101` et est rejetée avec
+`track-mismatch`. Auto conserve les 64 archives avec `tracks-partial`.
 
-Le diagnostic réel C3/101 du 18 septembre 2026 retourne 64 archives en deux pages,
-avec une recherche complète et sans erreur. Il ne valide pas le téléchargement
-ni la lecture. Ces résultats et les étapes restantes sont documentés dans le
-[guide de diagnostic des blocages](archive-playback-diagnostics.md). L’agent
-n’a lancé aucun test ni appel caméra. Les commandes ci-dessous sont à lancer
-depuis le dossier `Camera`, quand le poste est disponible.
+Les nouveaux tests de démarrage progressif et scrubbing restent à lancer.
+Les essais visuels instrumentés sont détaillés dans le
+[guide progressif et scrubbing](archive-playback-progressive.md).
+L’agent n’a lancé aucun test, média ni appel caméra. Les commandes ci-dessous
+sont à lancer depuis le dossier `Camera`, quand le poste est disponible.
 Ne démarrez pas deux essais vidéo simultanément. Fermez le premier lecteur et
 attendez sa fermeture complète avant de passer à la deuxième caméra.
 
@@ -98,12 +97,12 @@ Pour ouvrir **uniquement** Playback, sans le moniteur de santé/direct/PTZ :
 & $CameraPython camera_playback.py
 ```
 
-Ou lancer `Lancer-Enregistrements.cmd`. Les deux lanceurs Windows utilisent
+Ou lancer `Lancer-Recordings.cmd`. Les deux lanceurs Windows utilisent
 `%LOCALAPPDATA%\Programs\Python\Python39\python.exe` par défaut ; la variable
 `CAMERA_PYTHON` permet de choisir explicitement un autre interpréteur.
 Ils n’ajoutent pas le dossier de dépendances temporaire `.release-work/test-deps`.
 Choisir ensuite une seule caméra dans les
-filtres et dans la sélection active. En Réglages, confirmer son fuseau pour CGI.
+filtres et dans la sélection active. En Settings, confirmer son fuseau pour CGI.
 Si l’identité ne peut pas être découverte, renseigner une révision locale.
 Cliquer Appliquer : le logiciel arrête les anciennes recherches, enregistre le
 réglage local, recharge la caméra par son ID et relance sa journée. Aucune

@@ -7,15 +7,16 @@ an integrated archive window, camera-badge calendar, timeline, ISAPI/VideoLink
 queries, local cache, progressive MPEG/HLS preparation, playback controls and
 original/range export. The stable **v0.2.10** sources remain in `~v0.2.10`.
 
-**The corrected implementation awaits user-run qualification.** The first user
-trial exposed configuration/response errors; its test command failed before any
-test ran because it used a different Python environment. The assistant has not
-launched the application, tests, cameras or media. Camera compatibility, video/audio behavior, joins and responsive/DPI
-quality and measured export bounds require user-run qualification.
-Cross-archive range export remains outstanding; this is not
-a release or an assertion that issue #15 is complete.
+**The current progressive/scrubbing changes await user-run qualification.**
+The user passed all 44 earlier Playback tests under Python 3.9.13. C3/101 returns
+64 archives; C3/103 returns track 101 and is rejected as `track-mismatch`. Auto
+preserves the 64 usable archives as partial coverage. These are metadata results,
+not validation of progressive start, audio or scrubbing. Additional regressions
+and a slowed synthetic bench are prepared; the assistant has not launched tests,
+media, applications or camera requests. Cross-archive range export remains
+outstanding; this is not a release or a claim that issue #15 is complete.
 
-Use **Enregistrements** in Camera Viewer, or `Lancer-Enregistrements.cmd` for the
+Use **Recordings** in Camera Viewer, or `Lancer-Enregistrements.cmd` for the
 standalone archive browser. Both Windows launchers default to the user's
 `%LOCALAPPDATA%\Programs\Python\Python39\python.exe`; set `CAMERA_PYTHON` to
 override that explicit path. They do not inject temporary test dependencies.
@@ -23,7 +24,8 @@ Opening its calendar does not start a video. Add the
 new `tzdata` dependency using the same Python interpreter as the application.
 See [behavior, design and limits](docs/archive-playback.md) and
 [commands and test sequence](docs/archive-playback-testing.md).
-For the current blockers, start with the [environment and one-camera diagnostics](docs/archive-playback-diagnostics.md).
+See the [progressive start, scrubbing and English UI trial](docs/archive-playback-progressive.md)
+and [environment and one-camera diagnostics](docs/archive-playback-diagnostics.md).
 
 ## Current release: v0.2.10 — remembered window layout
 

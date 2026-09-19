@@ -21,6 +21,7 @@ from .server import SessionServer, Playlist
 from .store import Store
 from .diagnostics import Diagnostics, safe_fields
 from .remote import RemoteBackend
+from .progressive import ProgressivePreparation
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class Status:
     key: str = ''
     track: str = ''
     source: str = ''
+    preview_position: float = 0.
 
 
 class Controller:
@@ -73,6 +75,15 @@ class Controller:
         self.index_thread = None
         self.active_playlist = None
         self.active_request = None
+        self.seek_serial = 0
+        self.seek_target = None
+        self.sent_seek = None
+        self.open_seek_token = None
+        self.session_ranges = ()
+        self.preview_position = 0.
+        self.playlist_changing = threading.Event()
+        self.playback_lock = threading.RLock()
+        self.seek_thread = None
         self.thread = threading.Thread(target=self._run, name='Archive coordinator', daemon=True)
         self.thread.start()
 
@@ -95,6 +106,18 @@ class Controller:
             self.diagnostic_events = updated
         if self.log:
             self.log.event('camera-protocol', **detail)
+            if detail.get('stage') == 'first-byte':
+                self.log.event('first-byte', generation=self.active_request[0] if self.active_request else self.serial,
+                               **detail)
+
+    def _native_event(self, event, **values):
+        active = self.active_request
+        if not self.log or not active or active != self.request:
+            return False
+        if 'generation' in values and (not self.engine.request or self.engine.request[0] != values['generation']):
+            return False
+        self.log.event(event, camera_id=active[1], session_id=active[0], **values)
+        return True
 
     def apply_settings(self, settings, camera_id, day):
         """Queue a local reconfiguration; no network/disk/wait in the Tk callback."""
@@ -132,8 +155,61 @@ class Controller:
         self.cancel.set()
         self.request = (self.serial, int(camera_id), float(stamp))
         self.status = Status('LOADING', camera_id, stamp)
+        if self.log:
+            target = self.seek_target
+            self.log.event('request', camera_id=camera_id, generation=self.serial, position=stamp, rate=self.controls.rate,
+                           requested_monotonic=target[4] if target and target[1:3] == (camera_id, stamp) else time.monotonic())
+
+    def seek(self, camera_id, stamp, preview=False):
+        """Latest target mailbox, separate from transfer/session ownership."""
+        if self.seek_target is None and self.active_playlist and self.engine and self.engine.snapshot.displayed:
+            self.preview_position = self.active_playlist.absolute_at(self.engine.snapshot.position)
+        self.seek_serial += 1
+        self.seek_target = (self.seek_serial, int(camera_id), float(stamp), bool(preview), time.monotonic())
+
+    def _seek_loop(self):
+        while not self.stop_event.wait(.05):
+            try:
+                self._service_seek()
+            except PlaybackError as exc:
+                self.status = replace(self.status, reason=exc.code)
+
+    def _service_seek(self):
+        with self.playback_lock:
+            target = self.seek_target
+            if target is None or self.playlist_changing.is_set():
+                return
+            token, cid, stamp, preview, requested_at = target
+            playlist = self.active_playlist
+            active = self.active_request == self.request and self.request is not None and self.request[1] == cid
+            available = active and playlist and any(s.start <= stamp < s.start+s.duration for s in playlist.segments)
+            receiving = active and any(a <= stamp and (b is None or stamp < b) for a, b in self.session_ranges)
+            if not available and not receiving and not preview:
+                # Only a committed target outside this source replaces ownership.
+                if self.open_seek_token != token:
+                    self.open_seek_token = token
+                    if not (self.request and self.request[1:] == (cid, stamp)) or self.status.state in ('ERROR','FAILED','GAP','ENDED'):
+                        self.select(cid, stamp)
+                return
+            if not self.engine or not self.engine.request:
+                if self.engine and available:
+                    self._maybe_open(playlist, stamp, self.request)
+                return  # _maybe_open will use the most recent target.
+            marker = (token, bool(available), self.engine.request[0])
+            if self.sent_seek and self.sent_seek[0] == marker:
+                return
+            native_id = self.engine.seek(playlist.media_offset(stamp) if available else None, preview=preview)
+            self.sent_seek = (marker, native_id)
+            self.log.event('seek-request', camera_id=cid, generation=self.engine.request[0], seek_id=native_id,
+                           session_id=self.active_request[0],
+                           position=stamp, preview=preview, requested_monotonic=requested_at,
+                           reason='' if available else 'target-not-received')
+            if available:
+                self.log.event('target-available', camera_id=cid, session_id=self.active_request[0],
+                               seek_id=native_id, position=stamp, reserve=playlist.end-stamp)
 
     def stop(self):
+        self.seek_target = self.sent_seek = None
         self.request = None
         self.cancel.set()
         self.status = Status('STOPPED', self.status.camera_id, self.status.position)
@@ -163,15 +239,42 @@ class Controller:
     @property
     def view(self):
         status = self.status
+        if status.state in ('ERROR', 'FAILED', 'CONFIGURATION', 'STOPPED'):
+            return status
         playlist = self.active_playlist
+        target = self.seek_target
+        if target and target[1] != status.camera_id:
+            return replace(status, state='PREVIEW_LOADING', camera_id=target[1], position=target[2], preview_position=0.)
         if (playlist is not None and self.engine is not None and self.active_request == self.request
                 and self.engine.request is not None):
             native = self.engine.snapshot
+            if native.state == 'FAILED':
+                return replace(status, state='FAILED', reason=native.reason)
             if native.generation and native.state not in ('IDLE', 'FAILED'):
                 position = playlist.absolute_at(native.position)
+                target = self.seek_target
+                if target and target[1] == status.camera_id:
+                    sent = self.sent_seek
+                    confirmed = (sent and sent[0] == (target[0], True, native.generation)
+                                 and native.confirmed_seek == sent[1])
+                    if confirmed:
+                        self.preview_position = position
+                        if not target[3]:
+                            self.seek_target = None
+                    else:
+                        available = any(s.start <= target[2] < s.start+s.duration for s in playlist.segments)
+                        return replace(status, state='SEEKING' if available else 'PREVIEW_LOADING',
+                                       position=target[2], preview_position=self.preview_position, prepared_end=playlist.end)
+                    if target[3]:
+                        return replace(status, state='PREVIEW', position=target[2], preview_position=position,
+                                       prepared_end=playlist.end)
                 segment = next((s for s in playlist.segments if s.start <= position < s.start+s.duration), None)
                 return replace(status, state=native.state, position=position, prepared_end=playlist.end,
                                key=segment.archive_key if segment else status.key)
+        target = self.seek_target
+        if target and status.state not in ('ERROR', 'FAILED', 'CONFIGURATION', 'GAP', 'STOPPED'):
+            return replace(status, state='PREVIEW_LOADING', camera_id=target[1], position=target[2],
+                           preview_position=self.preview_position)
         return status
 
     def _catalog(self, year, month, ids):
@@ -303,6 +406,7 @@ class Controller:
 
     def _prepare(self, entry, camera, playlist, cancel, backend_holder, requested, request):
         r = entry.recording
+        self.session_ranges = (*self.session_ranges, (r.start, entry.end))
         directory = self.store.path(r.key)
         self.store.pin(r.key)
         directory.mkdir(exist_ok=True)
@@ -324,56 +428,64 @@ class Controller:
             partial = directory/'original.part'
             last_budget = [0]
             download_done, download_failed = threading.Event(), threading.Event()
-            progressive = {'thread': None, 'complete': False, 'error': None}
-            def progressive_prepare():
-                try:
-                    header = probe(partial, self.settings, cancel)
-                    if header['container'] not in ('mpeg', 'mpegts'):
-                        return  # MP4/moov needs the complete-file fallback.
-                    def publish(segments, final):
-                        check_cancel(cancel)
-                        self._publish_segments(playlist, r.key, segments, requested, request, final)
-                    prepare('pipe:0', directory, r, header, self.settings, cancel, publish,
-                        lambda: self.store.ensure_space(4*1024*1024),
-                        growing_chunks(partial, download_done, download_failed, cancel))
-                    progressive['complete'] = True
-                except Exception as exc:
-                    progressive['error'] = exc.code if isinstance(exc, PlaybackError) else 'preparation-incomplete'
+            progressive = None
+            first_byte = False
+            def emit(event, **values):
+                self.log.event(event, camera_id=camera.camera_id, generation=request[0], backend=r.backend, **values)
+                if event == 'mode-selected' and values.get('mode') == 'complete':
+                    self.status = replace(self.status, reason=values['reason'])
+                elif event == 'producer-failed':
+                    self.status = replace(self.status, state='FAILED', reason=values['reason'])
+            def produce(header, producer_cancel):
+                def publish(segments, final):
+                    check_cancel(producer_cancel)
+                    self._publish_segments(playlist, r.key, segments, requested, request, final)
+                prepare('pipe:0', directory, r, header, self.settings, producer_cancel, publish,
+                    lambda: self.store.ensure_space(4*1024*1024),
+                    growing_chunks(partial, download_done, download_failed, producer_cancel))
             def progress(received, expected, elapsed):
+                nonlocal progressive, first_byte
                 check_cancel(cancel)
                 if self.request != request:
                     raise Cancelled()
+                if self.engine.request and self.engine.snapshot.state == 'FAILED':
+                    raise PlaybackError(self.engine.snapshot.reason)
+                if not first_byte and received:
+                    first_byte = True
+                    emit('first-byte' if r.backend == 'fixture' else 'first-progress', received=received,
+                         elapsed=elapsed, evidence='fixture-first-chunk' if r.backend == 'fixture' else 'delivered-progress')
+                if progressive and progressive.error and (progressive.error == 'invalid-media-response' or
+                        any(k == r.key for k, _ in playlist.groups)):
+                    raise PlaybackError(progressive.error)
                 if received-last_budget[0] >= 4*1024*1024 or last_budget[0] == 0:
                     self.store.ensure_space(4*1024*1024)
                     last_budget[0] = received
+                self.status = replace(self.status, received=received, expected=expected or r.size)
                 if not playlist.url:
-                    self.status = Status('DOWNLOADING', camera.camera_id, requested,
+                    self.status = Status('DOWNLOADING', camera.camera_id, requested, reason=self.status.reason,
                         received=received, expected=expected or r.size, key=r.key, track=r.track)
-                if r.backend == 'isapi' and received >= 2*1024*1024 and progressive['thread'] is None:
-                    # Only MPEG-like containers are attempted progressively.
-                    # The prefix is inspected on a separate owned media job.
-                    progressive['thread'] = threading.Thread(target=progressive_prepare,
-                        name='Archive progressive MPEG', daemon=True)
-                    progressive['thread'].start()
+                if received and progressive is None:
+                    progressive = ProgressivePreparation(partial, self.settings, cancel, download_done,
+                                                         download_failed, produce, emit,
+                                                         lambda: any(k == r.key for k, _ in playlist.groups))
+                    progressive.start()
             try:
                 began = time.monotonic()
                 received = backend.download(r, partial, cancel, limit, progress)
-                self.log.event('download-complete',camera_id=camera.camera_id,received=received or partial.stat().st_size,
-                               elapsed=time.monotonic()-began)
+                emit('download-complete', received=received or partial.stat().st_size, elapsed=time.monotonic()-began)
                 download_done.set()
-                if progressive['thread']:
-                    while progressive['thread'].is_alive():
-                        check_cancel(cancel)
-                        progressive['thread'].join(timeout=.1)
+                if progressive:
+                    progressive.join()
                 check_cancel(cancel)
                 media = probe(partial, self.settings, cancel)
                 # Successful probe != finalization. Preserve the observed revision,
                 # and limit coverage to bytes actually received in this snapshot.
                 partial.replace(source)
                 self.store.state(r.key, 'downloaded', media)
-                if progressive['error'] and any(k == r.key for k, _ in playlist.groups):
-                    raise PlaybackError(progressive['error'])
-                if progressive['complete']:
+                if progressive and progressive.error and any(k == r.key for k, _ in playlist.groups):
+                    emit('progressive-failed', reason=progressive.error)
+                    raise PlaybackError(progressive.error)
+                if progressive and progressive.complete:
                     self.store.state(r.key, 'prepared', media)
                     entry = self.store.entry(r.key)
             except Exception:
@@ -382,10 +494,12 @@ class Controller:
                 raise
             finally:
                 download_done.set()
-                if progressive['thread']:
-                    progressive['thread'].join(timeout=8)
+                if progressive:
+                    progressive.join()
         if media is None:
             media = probe(source, self.settings, cancel)
+        self.session_ranges = tuple((a, r.start+media['duration'] if a == r.start else b)
+                                    for a, b in self.session_ranges)
         if not r.start <= requested < r.start+media['duration']:
             raise PlaybackError('no-video-in-snapshot')
         self.status = replace(self.status, key=r.key, track=r.track,
@@ -401,6 +515,7 @@ class Controller:
             check_cancel(cancel)
             self._publish_segments(playlist, r.key, segments, requested, request, final)
         try:
+            self.log.event('producer-start', camera_id=camera.camera_id, generation=request[0], mode='complete', container=media['container'])
             media = prepare(source, directory, r, media, self.settings, cancel, publish,
                             lambda: self.store.ensure_space(4*1024*1024))
             self.store.state(r.key, 'prepared', media)
@@ -415,28 +530,51 @@ class Controller:
         if not segments:
             return
         longest = max(s.duration for s in segments)
-        if longest > playlist.target_duration:
-            if not final:
-                return  # Long GOP: wait for finalized media, keep existing playback.
+        self.log.event('segments-ready', camera_id=self.status.camera_id, generation=request[0],
+                       count=len(segments), segment_duration=longest, complete=final)
+        first_publication = not playlist.url
+        if playlist.url and longest > playlist.target_duration:
+            self.playlist_changing.set()
             resume = self.view.position if self.engine.request is not None else requested
-            self.engine.stop()
-            while not self.engine.idle.wait(.05):
-                check_cancel(self.cancel)
-            self.server.clear()
-            playlist.rebase(resume, longest)
-            requested = resume
-            self.status = replace(self.status, state='BUFFERING')
-            self.log.event('long-gop-rebase',camera_id=self.status.camera_id,position=resume)
-        playlist.update(key, segments)
-        self._maybe_open(playlist, requested, request, final=final)
+            try:
+                self.engine.stop()
+                while not self.engine.idle.wait(.05):
+                    check_cancel(self.cancel)
+                self.server.clear()
+                playlist.rebase(resume, longest)
+                requested = resume
+                self.sent_seek = None
+                self.status = replace(self.status, state='BUFFERING')
+                self.log.event('long-gop-rebase', camera_id=self.status.camera_id, generation=request[0],
+                               position=resume, target_duration=playlist.target_duration, segment_duration=longest)
+            finally:
+                self.playlist_changing.clear()
+        with self.playback_lock:
+            playlist.update(key, segments)
+            if first_publication:
+                self.log.event('first-segment-published', camera_id=self.status.camera_id, generation=request[0],
+                               segment_duration=segments[0].duration, target_duration=playlist.target_duration)
+            self._maybe_open(playlist, requested, request, final=final)
 
     def _maybe_open(self, playlist, requested, request, final=False):
+        with self.playback_lock:
+            self._open_ready(playlist, requested, request, final)
+
+    def _open_ready(self, playlist, requested, request, final):
         if self.request != request:
             raise Cancelled()
+        target = self.seek_target
+        if target and target[1] == request[1]:
+            requested = target[2]
         self.status = replace(self.status, prepared_end=playlist.end)
-        if self.engine.request is None and playlist.url and playlist.end > requested and (
-                final or playlist.end-requested >= 8*self.controls.rate):
+        # Two viewing seconds to start; comfort prefetch remains independently 120s.
+        reserve = max(2., 2*self.controls.rate)
+        available = any(s.start <= requested < s.start+s.duration for s in playlist.segments)
+        if self.engine.request is None and playlist.url and available and (
+                final or playlist.end-requested >= reserve):
             self.engine.controls = self.controls
+            self.log.event('target-available', camera_id=request[1], generation=request[0], position=requested,
+                           reserve=playlist.end-requested)
             self.engine.open(playlist.url, playlist.media_offset(requested))
             self.status = replace(self.status, state='STARTING', position=requested)
 
@@ -448,8 +586,9 @@ class Controller:
         cancel = self.cancel = threading.Event()
         backend = [None]
         playlist = Playlist(self.server, requested)
+        self.session_ranges = ()
+        self.sent_seek = None
         self.active_playlist, self.active_request = playlist, request
-        self.log.event('request',camera_id=cid,generation=request[0],position=requested,rate=self.controls.rate)
         held = set()
         try:
             entry = self._find(camera, requested, cancel, backend)
@@ -461,6 +600,7 @@ class Controller:
                 if self.request != request:
                     break
                 native = self.engine.snapshot
+                self._maybe_open(playlist, requested, request, final=True)
                 position = playlist.absolute_at(native.position) if native.generation else requested
                 if native.state == 'FAILED':
                     raise PlaybackError(native.reason)
@@ -519,11 +659,15 @@ class Controller:
                         self.select(cid, playlist.end)
                     return
         finally:
+            self.playlist_changing.set()
             self.engine.stop()
             while not self.engine.idle.wait(.05):
                 pass  # Coordinator only; native supervisor has bounded teardown.
             self.server.clear()
             self.active_playlist = self.active_request = None
+            self.session_ranges = ()
+            self.sent_seek = None
+            self.playlist_changing.clear()
             if self.server.drained.wait(4):
                 for key in held:
                     self.store.unpin(key)
@@ -626,12 +770,14 @@ class Controller:
                 self.cameras, cipher = load_cameras(self.settings, self.root)
             self.store = Store(self.settings, cipher)
             self.log = Diagnostics(self.store.root)
-            self.engine = Engine(self.hwnd)
+            self.engine = Engine(self.hwnd, self._native_event)
             self.server = SessionServer()
             self.index_thread = threading.Thread(target=self._index, name='Archive metadata', daemon=True)
             self.index_thread.start()
             self.status = Status('IDLE')
             self.ready.set()
+            self.seek_thread = threading.Thread(target=self._seek_loop, name='Archive seek mailbox', daemon=True)
+            self.seek_thread.start()
             previous = None
             while not self.stop_event.wait(.1):
                 if self.settings_request is not None:
@@ -675,6 +821,8 @@ class Controller:
         finally:
             self.stop_event.set()
             self.index_cancel.set()
+            if self.seek_thread:
+                self.seek_thread.join(timeout=2)
             if self.engine:
                 self.engine.close()
                 self.engine.closed.wait(12)

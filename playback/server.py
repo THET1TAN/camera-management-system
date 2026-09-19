@@ -159,7 +159,7 @@ class Playlist:
         self.groups = []
         self.closed = False
         self.url = ''
-        self.target_duration = 12
+        self.target_duration = 0  # Measured before the first public generation.
 
     @property
     def segments(self):
@@ -193,6 +193,8 @@ class Playlist:
     def update(self, key, segments):
         if not segments:
             return
+        if not self.url:
+            self.target_duration = max(self.target_duration, math.ceil(max(s.duration for s in segments)))
         if any(s.duration > self.target_duration for s in segments):
             raise PlaybackError('long-gop-progressive')
         for n, (old_key, old_segments) in enumerate(self.groups):
@@ -235,6 +237,6 @@ class Playlist:
         """Called only after the old native owner is reaped; old URLs are retired."""
         self.identifier = secrets.token_hex(12)
         self.requested = requested
-        self.target_duration = max(12, math.ceil(target_duration))
+        self.target_duration = max(1, math.ceil(target_duration))
         self.closed = False
         self.url = ''

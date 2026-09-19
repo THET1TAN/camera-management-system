@@ -13,13 +13,10 @@ from zoneinfo import ZoneInfo
 from .config import ROOT
 from .controller import Controller
 from .model import Controls, Viewport, day_bounds, local_candidates, layout_mode
-from .presentation import ACTIONS, COLORS as C, CAMERA_COLORS, STATES, error_text
+from .presentation import DAY_STATES, ACTIONS, COLORS as C, CAMERA_COLORS, STATES, error_text, TEXT, MONTHS, WEEKDAYS
 from .widgets import Icons, IconButton, Help, styles
 
-MONTHS = ('janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre')
-DAY_STATES = {'unknown':'non interrogé', 'empty':'absence confirmée', 'partial':'recherche partielle',
-              'error':'erreur de recherche', 'present':'présence indexée', 'cache':'cache local',
-              'configuration':'configuration du fuseau caméra requise'}
+
 
 
 def frame(parent, color=None, **kwargs):
@@ -34,7 +31,7 @@ def label(parent, text='', *, secondary=False, size=10, **kwargs):
 class PlaybackWindow:
     def __init__(self, parent, camera_id=None, on_closed=None, fixture_directory=None, selected_day=None, day_only=False):
         self.window = tk.Toplevel(parent) if parent is not None else tk.Tk()
-        self.window.title('Enregistrements — v0.2.11-dev')
+        self.window.title(TEXT['window_title'])
         self.window.configure(bg=C['background'])
         self.window.geometry('1160x800')
         self.window.minsize(520, 460)
@@ -67,7 +64,7 @@ class PlaybackWindow:
         styles(self.window)
         self.window.grid_columnconfigure(0, weight=1)
         self.window.grid_rowconfigure(1, weight=1)
-        self.footer = label(self.window, 'Survolez une commande ou utilisez Tab pour consulter son aide.',
+        self.footer = label(self.window, TEXT['footer_help'],
                             secondary=True, anchor='w', height=2, justify='left')
         self.footer.grid(row=3, column=0, sticky='ew', padx=16, pady=(0,8))
         self.help = Help(self.window, self.footer)
@@ -80,22 +77,29 @@ class PlaybackWindow:
         self._video()
         self._commands()
         self._timeline()
-        self.notice = label(self.window, 'Version de développement · validation sur votre poste à effectuer',
+        self.notice = label(self.window, TEXT['development_notice'],
                             secondary=True, anchor='w')
         self.notice.grid(row=2, column=0, sticky='ew', padx=16, pady=(0,5))
         self.window.bind('<Configure>', self._configure, add='+')
+        self.window.bind('<F8>', self._observed_frame, add='+')
         self.start_timer = self.window.after_idle(self._start)
 
     def button(self, parent, action, command, *, text=False, tip=None):
         return IconButton(parent, action, command, self.icons, self.help, label=text, tip=tip)
 
+    def _observed_frame(self, _event=None):
+        if self.controller and self.controller.log:
+            recorded = self.controller._native_event('screen-frame-observed', position=self.position,
+                                                     evidence='user-keypress-not-automatic')
+            self.footer.config(text=TEXT['frame_observation' if recorded else 'frame_observation_unavailable'])
+
     def _header(self):
         header = frame(self.window, C['background'])
         header.grid(row=0, column=0, sticky='ew', padx=16, pady=(14,12))
         header.grid_columnconfigure(1, weight=1)
-        title = label(header, 'Enregistrements', size=17, anchor='w')
+        title = label(header, TEXT['recordings'], size=17, anchor='w')
         title.grid(row=0, column=0, columnspan=2, sticky='w')
-        self.identity = label(header, 'ARCHIVES · initialisation', secondary=True, anchor='w')
+        self.identity = label(header, TEXT['initializing'], secondary=True, anchor='w')
         self.identity.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(3,0))
         actions = frame(header, C['background'])
         actions.grid(row=0, column=2, rowspan=2, sticky='e')
@@ -114,17 +118,17 @@ class PlaybackWindow:
         self.nav = frame(self.tabs)
         self.details = frame(self.tabs)
         self.settings_frame = frame(self.tabs)
-        for panel, title in ((self.nav,'Calendrier'), (self.details,'Détails / export'), (self.settings_frame,'Réglages')):
+        for panel, title in ((self.nav,TEXT['calendar']), (self.details,TEXT['details_export']), (self.settings_frame,TEXT['settings'])):
             self.tabs.add(panel, text=title)
         self.nav.grid_columnconfigure(0, weight=1)
         self.nav.grid_rowconfigure(5, weight=1)
-        label(self.nav, 'CAMÉRA ACTIVE', secondary=True, size=9, anchor='w').grid(row=0,column=0,sticky='ew',padx=10,pady=(12,3))
+        label(self.nav, TEXT['active_camera'], secondary=True, size=9, anchor='w').grid(row=0,column=0,sticky='ew',padx=10,pady=(12,3))
         self.camera_choice = ttk.Combobox(self.nav, state='readonly', style='Playback.TCombobox')
         self.camera_choice.grid(row=1,column=0,sticky='ew',padx=10)
         self.camera_choice.bind('<<ComboboxSelected>>', self._camera_changed)
         filter_frame = frame(self.nav)
         filter_frame.grid(row=2,column=0,sticky='ew',padx=10,pady=8)
-        label(filter_frame, 'Caméras du calendrier', secondary=True).pack(anchor='w')
+        label(filter_frame, TEXT['calendar_cameras'], secondary=True).pack(anchor='w')
         self.filter_list = tk.Listbox(filter_frame, selectmode='multiple', exportselection=False, height=3,
             bg=C['background'], fg=C['text'], selectbackground=C['raised'], selectforeground=C['accent'],
             bd=0, highlightthickness=1, highlightcolor=C['accent'], highlightbackground=C['border'], font=('Segoe UI',10))
@@ -157,7 +161,7 @@ class PlaybackWindow:
         self.calwindow = self.calcanvas.create_window(0,0,window=self.calgrid,anchor='nw')
         self.calcanvas.bind('<Configure>', lambda e:self.calcanvas.itemconfigure(self.calwindow,width=e.width))
         self.calgrid.bind('<Configure>', lambda _e:self.calcanvas.configure(scrollregion=self.calcanvas.bbox('all')))
-        label(self.nav,'C# : vidéo indexée · * : cache local\n? non interrogé · ! erreur · … partiel · — vide',
+        label(self.nav,TEXT['calendar_legend'],
               secondary=True,size=9,justify='left').grid(row=6,column=0,sticky='w',padx=10,pady=(0,8))
         self._build_calendar()
         self._details_panel()
@@ -168,7 +172,7 @@ class PlaybackWindow:
         self.video.grid(row=0,column=1,sticky='nsew')
         self.surface = frame(self.video,'#080d14')
         self.surface.place(x=0,y=0,relwidth=1,relheight=1)
-        self.overlay = tk.Label(self.video,text='ENREGISTREMENTS\n\nChoisissez une caméra et une date.',
+        self.overlay = tk.Label(self.video,text=TEXT['choose_camera'],
             bg='#080d14',fg=C['secondary'],font=('Segoe UI',13),justify='center',wraplength=420)
         self.overlay.place(x=0,y=0,relwidth=1,relheight=1)
         self.overlay.lift()
@@ -185,8 +189,8 @@ class PlaybackWindow:
         self.button(g,'forward',lambda:self.jump(10),text=True).pack(side='left',padx=2,pady=3)
         self.button(g,'next_record',self.next_record).pack(side='left',padx=2,pady=3)
         g = self.groups[1]
-        label(g,'Vitesse').pack(side='left',padx=(6,4))
-        self.rate = ttk.Combobox(g,state='readonly',width=5,values=('0,5×','1×','2×','4×'),style='Playback.TCombobox')
+        label(g,TEXT['speed']).pack(side='left',padx=(6,4))
+        self.rate = ttk.Combobox(g,state='readonly',width=5,values=('0.5×','1×','2×','4×'),style='Playback.TCombobox')
         self.rate.set('1×')
         self.rate.pack(side='left',padx=2)
         self.rate.bind('<<ComboboxSelected>>',self._rate_changed)
@@ -197,15 +201,15 @@ class PlaybackWindow:
             command=self._volume_changed)
         self.volume.set(70)
         self.volume.pack(side='left',padx=2)
-        self.help.bind(self.volume,'Régler le volume de 0 à 100 ; les flèches fonctionnent au clavier')
+        self.help.bind(self.volume,TEXT['volume_help'])
         g = self.groups[2]
-        self.button(g,'previous',lambda:self.select_date(self.selected-timedelta(days=1)),tip='Afficher le jour précédent').pack(side='left',padx=2)
+        self.button(g,'previous',lambda:self.select_date(self.selected-timedelta(days=1)),tip=TEXT['previous_day']).pack(side='left',padx=2)
         self.clock_entry = ttk.Entry(g,width=10,font=('Segoe UI',10))
         self.clock_entry.insert(0,'12:00:00')
         self.clock_entry.pack(side='left',padx=3)
         self.clock_entry.bind('<Return>',lambda _e:self.goto())
         self.button(g,'goto',self.goto).pack(side='left',padx=2)
-        self.button(g,'next',lambda:self.select_date(self.selected+timedelta(days=1)),tip='Afficher le jour suivant').pack(side='left',padx=2)
+        self.button(g,'next',lambda:self.select_date(self.selected+timedelta(days=1)),tip=TEXT['next_day']).pack(side='left',padx=2)
 
     def _timeline(self):
         self.timeframe = frame(self.area)
@@ -232,8 +236,9 @@ class PlaybackWindow:
         self.timeline.bind('<minus>',lambda _e:self.zoom(2))
         self.horizontal = ttk.Scrollbar(self.timeframe,orient='horizontal',command=self._scroll_time)
         self.horizontal.grid(row=2,column=0,columnspan=2,sticky='ew',padx=8,pady=3)
-        label(self.timeframe,'Index caméra ▬   Reçu ━   Lisible ═   Durée inconnue │   Fond : consulter l’état du jour',
-              secondary=True,size=9,anchor='w').grid(row=3,column=0,columnspan=2,sticky='ew',padx=8,pady=(0,6))
+        self.timeline_legend = label(self.timeframe,TEXT['timeline_legend'],
+                                     secondary=True,size=9,anchor='w',justify='left',wraplength=460)
+        self.timeline_legend.grid(row=3,column=0,columnspan=2,sticky='ew',padx=8,pady=(0,6))
 
     def _details_panel(self):
         self.details.grid_rowconfigure(0,weight=1)
@@ -250,12 +255,12 @@ class PlaybackWindow:
         self.original_button.pack(fill='x',pady=3)
         marks = frame(box)
         marks.pack(fill='x',pady=3)
-        for text,which in (('A — début','a'),('B — fin','b')):
+        for text,which in ((TEXT['mark_a'],'a'),(TEXT['mark_b'],'b')):
             button = tk.Button(marks,text=text,command=lambda w=which:self.mark(w),bg=C['raised'],fg=C['text'],
                 activebackground=C['border'],activeforeground=C['text'],bd=0,padx=8,pady=6,takefocus=True)
             button.pack(side='left',fill='x',expand=True,padx=2)
-            self.help.bind(button,'Marquer la position actuelle comme '+('début' if which=='a' else 'fin')+' de la plage à exporter')
-        self.range_label = label(box,'Plage A–B : non sélectionnée',secondary=True,anchor='w',wraplength=270)
+            self.help.bind(button,TEXT['mark_help_prefix']+(TEXT['mark_start'] if which=='a' else TEXT['mark_end'])+TEXT['mark_help_suffix'])
+        self.range_label = label(box,TEXT['no_selection'],secondary=True,anchor='w',wraplength=270)
         self.range_label.pack(fill='x',pady=4)
         self.export_button = self.button(box,'export',lambda:self.export(True),text=True)
         self.export_button.pack(fill='x',pady=3)
@@ -279,20 +284,18 @@ class PlaybackWindow:
         self.settings_identity = label(inner, '', anchor='w', wraplength=270)
         self.settings_identity.pack(fill='x',padx=10,pady=8)
         for name,title,values in (
-            ('backend','API de la caméra active',('auto','isapi','videolink')),
-            ('zone','Fuseau caméra confirmé (CGI)',('','America/Toronto','UTC','Europe/Paris')),
-            ('track','Piste / flux (vide = automatique)',None),
-            ('revision','Révision locale de l’appareil',None),
-            ('time_shift','Correction locale explicite (secondes)',None),
-            ('display_zone','Fuseau d’affichage',('America/Toronto','UTC','Europe/Paris')),
-            ('cache_gib','Quota du cache (Gio)',None)):
+            ('backend',TEXT['setting_backend'],('auto','isapi','videolink')),
+            ('zone',TEXT['setting_zone'],('','America/Toronto','UTC','Europe/Paris')),
+            ('track',TEXT['setting_track'],None),
+            ('revision',TEXT['setting_revision'],None),
+            ('time_shift',TEXT['setting_shift'],None),
+            ('display_zone',TEXT['setting_display_zone'],('America/Toronto','UTC','Europe/Paris')),
+            ('cache_gib',TEXT['setting_quota'],None)):
             label(inner,title,secondary=True,anchor='w').pack(fill='x',padx=10,pady=(12,3))
             widget = ttk.Combobox(inner,values=values,style='Playback.TCombobox') if values else ttk.Entry(inner,font=('Segoe UI',10))
             widget.pack(fill='x',padx=10)
             self.fields[name] = widget
-        label(inner,'La correction d’heure agit uniquement ici.\nLa caméra et son horloge ne sont pas modifiées.\n\n'
-              'Changez la révision après remplacement d’une caméra sans numéro de série détectable.\n'
-              'Les mots de passe restent dans la base existante.',secondary=True,justify='left',wraplength=270).pack(fill='x',padx=10,pady=12)
+        label(inner,TEXT['settings_help'],secondary=True,justify='left',wraplength=270).pack(fill='x',padx=10,pady=12)
         self.apply_button = self.button(inner,'apply',self.apply_settings,text=True)
         self.apply_button.pack(fill='x',padx=10,pady=8)
 
@@ -356,15 +359,15 @@ class PlaybackWindow:
         if self.controller.ready.is_set() and not self.initialized:
             self._initialize()
         configuration = self.controller.configuration_status
-        self.apply_button.set_enabled(configuration != 'pending', 'Application des réglages en cours')
+        self.apply_button.set_enabled(configuration != 'pending', TEXT['applying'])
         if configuration != self.configuration_snapshot:
             self.configuration_snapshot = configuration
             if configuration == 'complete':
                 self.zone = self.controller.settings.display_zone
-                self.footer.config(text='Réglages appliqués. Recherche de cette caméra/journée relancée ; aucune réouverture nécessaire.')
+                self.footer.config(text=TEXT['applied'])
                 self._load_fields()
             elif configuration:
-                self.footer.config(text='Application des réglages en cours…' if configuration == 'pending' else error_text(configuration))
+                self.footer.config(text=TEXT['applying_progress'] if configuration == 'pending' else error_text(configuration))
         status = self.controller.view
         if status.camera_id and status.state not in ('IDLE','STOPPED') and not self.dragging:
             self.position = status.position
@@ -382,36 +385,47 @@ class PlaybackWindow:
                 self.view = Viewport(self.position-self.view.span*.2,self.view.span)
         text = STATES.get(status.state,status.state)
         if status.state == 'DOWNLOADING':
-            text += f' · {status.received/1048576:.1f} Mio'
+            text += TEXT['received_mib'].format(size=status.received/1048576)
             if status.expected:
-                text += f' / {status.expected/1048576:.1f} Mio'
+                text += TEXT['expected_mib'].format(size=status.expected/1048576)
         elif status.source == 'cache':
-            text += ' · cache local'
+            text += TEXT['cached_suffix']
+        elif status.expected and status.received < status.expected:
+            text += TEXT['background_download'].format(received=status.received/1048576, expected=status.expected/1048576)
         if status.reason:
             text += '\n'+error_text(status.reason)
         self.overlay.config(text=text,wraplength=max(200,self.video.winfo_width()-60))
-        if status.state in ('PLAYING','PAUSED'):
+        if status.state in ('PLAYING','PAUSED','PREVIEW'):
             self.overlay.place_forget()
+        elif status.state in ('SEEKING','PREVIEW_LOADING') and self.controller.engine and self.controller.engine.snapshot.displayed:
+            # Keep the native surface visible. The requested time is explicitly
+            # separate from the last confirmed preview; stale pixels aren't a hit.
+            self.overlay.place(x=0,y=0,relx=0,rely=1,anchor='sw',relwidth=1,relheight=0,height=68)
+            self.overlay.lift()
         else:
-            self.overlay.place(x=0,y=0,relwidth=1,relheight=1)
+            self.overlay.place(x=0,y=0,relx=0,rely=0,anchor='nw',relwidth=1,relheight=1,height=0)
             self.overlay.lift()
         try:
             instant = datetime.fromtimestamp(self.position,ZoneInfo(self.zone))
             shown = instant.strftime('%Y-%m-%d  %H:%M:%S %Z')
         except Exception:
             shown = '—'
-        prefix='DÉMONSTRATION LOCALE' if self.fixture_directory else 'ARCHIVES'
+        prefix=TEXT['fixture_label'] if self.fixture_directory else TEXT['archive_label']
         self.identity.config(text=f'{prefix} · C{self.camera_id or "—"} · {self.controls.rate:g}× · {shown}')
         self.time_label.config(text=f'{shown}  ·  {self.view.span/60:g} min')
+        if status.state in ('PREVIEW','SEEKING','PREVIEW_LOADING'):
+            actual = (datetime.fromtimestamp(status.preview_position,ZoneInfo(self.zone)).strftime('%H:%M:%S %Z')
+                      if status.preview_position else '—')
+            self.time_label.config(text=TEXT['preview_times'].format(requested=shown, actual=actual))
         self.notice.config(text=text.split('\n')[0])
         self.play_button.set_action('play' if self.controls.paused or status.state in ('IDLE','STOPPED','GAP','ERROR','CONFIGURATION','ENDED') else 'pause')
-        self.original_button.set_enabled(bool(status.key), 'Choisissez et recevez une archive avant de la conserver')
+        self.original_button.set_enabled(bool(status.key), TEXT['original_disabled'])
         self.export_button.set_enabled(bool(status.key and self.mark_a is not None and self.mark_b is not None and self.mark_b>self.mark_a),
-                                       'Sélectionnez un début A et une fin B dans une archive reçue')
-        self.cancel_button.set_enabled(self.controller.export_request is not None,'Aucun export en cours')
+                                       TEXT['export_disabled'])
+        self.cancel_button.set_enabled(self.controller.export_request is not None,TEXT['cancel_disabled'])
         export = self.controller.export_status
-        self.export_label.config(text={'pending':'Export en attente','working':'Export en cours',
-            'complete':'Export conservé avec ses métadonnées','cancelled':'Export annulé'}.get(export,error_text(export)))
+        self.export_label.config(text={'pending':TEXT['export_pending'],'working':TEXT['export_working'],
+            'complete':TEXT['export_complete'],'cancelled':TEXT['export_cancelled']}.get(export,error_text(export)))
         if self.calendar_snapshot is not self.controller.calendar or self.diagnostic_snapshot is not self.controller.diagnostic_events:
             self.calendar_snapshot = self.controller.calendar
             self.diagnostic_snapshot = self.controller.diagnostic_events
@@ -434,7 +448,7 @@ class PlaybackWindow:
             child.destroy()
         self.cells = {}
         self.month_label.config(text=f'{MONTHS[self.month-1]} {self.year}')
-        for col,title in enumerate(('L','M','M','J','V','S','D')):
+        for col,title in enumerate(WEEKDAYS):
             self.calgrid.grid_columnconfigure(col,weight=1,uniform='days')
             label(self.calgrid,title,secondary=True,size=9).grid(row=0,column=col,sticky='ew')
         for row,week in enumerate(calendar.monthcalendar(self.year,self.month),1):
@@ -489,14 +503,14 @@ class PlaybackWindow:
     def _show_details(self):
         if not self.controller:
             return
-        lines=[self.selected.strftime('%Y-%m-%d')+' · '+self.zone, '', 'Disponibilités des caméras filtrées']
+        lines=[self.selected.strftime('%Y-%m-%d')+' · '+self.zone, '', TEXT['availability']]
         configure_ids=[]
         for cid in self.selected_ids():
             info=self.controller.calendar.get((cid,self.selected),{})
-            title=DAY_STATES.get(info.get('state','unknown'),'inconnu')
-            lines.append(f'C{cid} · {title}'+(' · cache local' if info.get('cached') else ''))
+            title=DAY_STATES.get(info.get('state','unknown'),TEXT['unknown'])
+            lines.append(f'C{cid} · {title}'+(TEXT['cached_suffix'] if info.get('cached') else ''))
             if info.get('checked'):
-                lines.append('  Recherche : '+datetime.fromtimestamp(info['checked'],ZoneInfo(self.zone)).strftime('%d/%m %H:%M'))
+                lines.append(TEXT['search_time']+datetime.fromtimestamp(info['checked'],ZoneInfo(self.zone)).strftime('%Y-%m-%d %H:%M'))
             if info.get('reason'):
                 lines.append('  '+error_text(info['reason']))
             if info.get('reason') == 'timezone-required':
@@ -509,21 +523,21 @@ class PlaybackWindow:
                     if key in detail:
                         parts.append(f'{key}={detail[key]}')
                 lines.append('  '+' · '.join(parts))
-        lines.extend(('', 'Python Playback : '+sys.executable,
-                      'Processus caméra et lecteur : même interpréteur que Playback.'))
+        lines.extend(('', TEXT['python_label']+sys.executable,
+                      TEXT['runtime_help']))
         if self.controller.engine and self.controller.engine.runtime:
             runtime=self.controller.engine.runtime
-            lines.append('Lecteur natif observé : Python '+runtime.get('python','?')+' · même interpréteur : '+
+            lines.append(TEXT['native_python']+runtime.get('python','?')+TEXT['same_python']+
                          str(runtime.get('python_executable_matches_parent')))
         if self.day_only:
-            lines.append('Recherche limitée à la journée sélectionnée ; les autres dates restent en cache/non interrogées.')
-        lines.extend(('', 'Un badge signifie présence indexée, pas une journée complète.',
-            'Une durée CGI inconnue apparaît comme un repère ponctuel jusqu’à inspection du média.',
-            'Le cache est une copie observée : un fichier caméra peut encore grandir.', '',
-            'Audio : même réglage à toutes les vitesses. Son initialement coupé ; utilisez le bouton Son.',
-            'Export de plage : remux MKV aux images clés, sans promesse de coupe à l’image.'))
+            lines.append(TEXT['day_only'])
+        lines.extend(('', TEXT['badge_help'],
+            TEXT['unknown_duration_help'],
+            TEXT['cache_help'], '',
+            TEXT['audio_help'],
+            TEXT['export_help']))
         if self.icons.missing:
-            lines.append('Ressources d’icônes manquantes : '+', '.join(sorted(self.icons.missing)))
+            lines.append(TEXT['missing_icons']+', '.join(sorted(self.icons.missing)))
         self.detail_text.config(state='normal')
         for button in self.configuration_links:
             button.destroy()
@@ -531,8 +545,8 @@ class PlaybackWindow:
         self.detail_text.delete('1.0','end')
         for cid in configure_ids:
             button=self.button(self.detail_text,'settings',lambda c=cid:self.configure_camera(c),text=True,
-                               tip=f'Configurer le fuseau local de C{cid}')
-            button.config(text=f'Configurer le fuseau de C{cid}')
+                               tip=TEXT['configure_zone_tip'].format(cid=cid))
+            button.config(text=TEXT['configure_zone'].format(cid=cid))
             self.detail_text.window_create('end',window=button)
             self.detail_text.insert('end','\n')
             self.configuration_links.append(button)
@@ -585,7 +599,7 @@ class PlaybackWindow:
     def seek(self,stamp):
         if self.controller and self.initialized and self.camera_id is not None:
             self.position=stamp
-            self.controller.select(self.camera_id,stamp)
+            self.controller.seek(self.camera_id,stamp)
 
     def goto(self):
         try:
@@ -598,7 +612,7 @@ class PlaybackWindow:
             self.view=Viewport(self.position-self.view.span*.25,self.view.span)
             self.seek(self.position)
         except ValueError:
-            self.footer.config(text='Saisissez une heure au format HH:mm:ss.')
+            self.footer.config(text=TEXT['time_format'])
 
     def jump(self,seconds):
         self.seek(self.position+seconds)
@@ -616,6 +630,7 @@ class PlaybackWindow:
             self.controller.set_controls(self.controls)
 
     def stop(self):
+        self.dragging=False
         if self.seek_timer is not None:
             self.window.after_cancel(self.seek_timer)
             self.seek_timer=None
@@ -628,10 +643,10 @@ class PlaybackWindow:
         candidates=[e for e in self.controller.entries if e.recording.camera_id==self.camera_id and e.recording.start>self.position+.5]
         if candidates:
             target=min(e.recording.start for e in candidates)
-            self.footer.config(text=f'Saut demandé vers le prochain enregistrement : +{target-self.position:.0f} secondes.')
+            self.footer.config(text=TEXT['next_jump'].format(seconds=target-self.position))
             self.seek(target)
         else:
-            self.footer.config(text='Aucun enregistrement suivant dans le mois chargé. Consultez le mois suivant.')
+            self.footer.config(text=TEXT['no_next_recording'])
 
     def _rate_changed(self,_event=None):
         rate=float(self.rate.get().replace('×','').replace(',','.'))
@@ -733,10 +748,14 @@ class PlaybackWindow:
 
     def _drag(self,event):
         self.position=self.view.at(event.x-58,max(1,self.timeline.winfo_width()-58))
-        if self.seek_timer is not None:
-            self.window.after_cancel(self.seek_timer)
-        self.seek_timer=self.window.after(350,self._commit_seek)
+        if self.seek_timer is None:
+            self.seek_timer=self.window.after(125,self._preview_seek)
         self._draw_timeline()
+
+    def _preview_seek(self):
+        self.seek_timer=None
+        if self.dragging and not self.closing and self.controller and self.initialized and self.camera_id is not None:
+            self.controller.seek(self.camera_id,self.position,preview=True)
 
     def _drag_end(self,event):
         self._drag(event)
@@ -763,8 +782,8 @@ class PlaybackWindow:
         if not self.controller or not self.controller.view.key:
             return
         stamp=datetime.fromtimestamp(self.position,ZoneInfo(self.zone)).strftime('%Y%m%d-%H%M%S')
-        name=f'C{self.camera_id}-{stamp}'+('-plage.mkv' if selection else '-original.bin')
-        path=filedialog.asksaveasfilename(parent=self.window,title='Conserver la plage MKV' if selection else 'Conserver l’archive originale',
+        name=f'C{self.camera_id}-{stamp}'+('-selection.mkv' if selection else '-original.bin')
+        path=filedialog.asksaveasfilename(parent=self.window,title=TEXT['save_selection'] if selection else TEXT['save_original'],
             initialfile=name,defaultextension='.mkv' if selection else '.bin')
         if path:
             self.controller.export(path,self.mark_a if selection else None,self.mark_b if selection else None)
@@ -774,8 +793,7 @@ class PlaybackWindow:
             return
         settings=self.controller.settings
         local=settings.cameras.get(str(self.camera_id),{})
-        self.settings_identity.config(text=f'Réglages locaux de C{self.camera_id} · ID de la base enregistrée\n'
-            'Fuseau caméra et fuseau d’affichage sont distincts.')
+        self.settings_identity.config(text=TEXT['settings_identity'].format(cid=self.camera_id))
         defaults={'backend':'auto','zone':'','track':'','revision':'','time_shift':0,
                   'display_zone':settings.display_zone,'cache_gib':settings.cache_gib}
         for name,widget in self.fields.items():
@@ -795,7 +813,7 @@ class PlaybackWindow:
 
     def apply_settings(self):
         if self.fixture_directory:
-            self.footer.config(text='Le banc local utilise ses propres réglages et son propre cache.')
+            self.footer.config(text=TEXT['fixture_settings'])
             return
         if not self.initialized or self.camera_id is None:
             return
@@ -816,9 +834,9 @@ class PlaybackWindow:
             settings.cameras[str(self.camera_id)]=dict(previous,backend=values['backend'],zone=values['zone'],
                 track=values['track'],revision=values['revision'],time_shift=shift)
             self.controller.apply_settings(settings,self.camera_id,self.selected)
-            self.footer.config(text='Application des réglages de cette caméra ; la recherche de la journée sera relancée.')
+            self.footer.config(text=TEXT['apply_search'])
         except Exception:
-            self.footer.config(text='Réglages invalides : vérifiez les fuseaux, la correction et le quota.')
+            self.footer.config(text=TEXT['invalid_settings'])
 
     def toggle_panel(self):
         self.panel_open=not self.panel_open
@@ -846,6 +864,9 @@ class PlaybackWindow:
         width,height=self.window.winfo_width(),self.window.winfo_height()
         self.mode=layout_mode(width,height,self.icons.scale,self.mode)
         self.footer.config(wraplength=max(200,width-32))
+        self.timeline_legend.config(wraplength=max(200,width-48))
+        self.identity.config(wraplength=max(200,width-180))
+        self.time_label.config(wraplength=max(180,width-160),justify='left')
         wide=self.mode in ('wide','medium')
         self.area.grid_columnconfigure(0,weight=0,minsize=0)
         self.area.grid_rowconfigure(3,weight=0,minsize=0)
