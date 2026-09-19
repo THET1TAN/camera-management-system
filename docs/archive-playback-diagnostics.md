@@ -8,10 +8,18 @@ différence de contenu, hors fins de ligne. Le checkout Git de la PR était prop
 
 | Blocage | Cause établie | Ce qui n’est pas encore établi |
 |---|---|---|
-| Import `cryptography` | La trace utilisateur vient de Python 3.14, tandis que les deux processus Viewer observés utilisent Python 3.9. L’import échoue avant l’exécution de tout test. | La suite complète et les dépendances natives de lecture ne sont pas qualifiées par ce constat. |
+| Import `cryptography` | La première trace venait de Python 3.14 et échouait avant tout test. Le nouvel essai utilisateur utilise Python 3.9.13 64 bits, avec les dépendances présentes, et exécute les 44 tests Playback. | Les dépendances natives de lecture ne sont pas qualifiées par leur seule présence. |
+| Nettoyage du test SQLite sous Windows | 43 tests réussissent ; le dernier termine ses assertions mais échoue à supprimer sa base temporaire (`WinError 32`). Le contexte SQLite valide la transaction sans fermer la connexion du montage de test. La fermeture explicite est maintenant ajoutée avec `closing`. | La relance des 44 tests après correction reste à effectuer par l’utilisateur. Sa base réelle n’est pas impliquée dans cette erreur. |
 | Fuseau CGI | Aucun `playback.json` n’était présent ; `camera.zone` était donc vide. Le fuseau d’affichage ne le remplace pas. Le lien entre ID de base et caméra CGI a été vérifié localement et la confirmation Toronto sauvegardée uniquement pour cet ID. | La corrélation image/heure et les cas DST doivent encore être vérifiés. |
-| Réponses ISAPI/auto | Le code abandonnait tous les résultats lorsqu’une piste suivante levait une erreur, et ne conservait pas toutes les causes de détection. Ces défauts ont été corrigés. | Aucun nouveau relevé caméra ne prouve que la piste 103 explique les erreurs de ce banc. Les étapes exactes restent à relever. |
-| Namespaces | Le parser retirait déjà les namespaces. Les fixtures reprennent le namespace réellement observé et la structure des XML sauvegardés. | Un problème de namespace n’est pas démontré par le message générique initial. |
+| Réponses ISAPI/auto | Le code abandonnait tous les résultats lorsqu’une piste suivante levait une erreur, et ne conservait pas toutes les causes de détection. Ces défauts ont été corrigés. L’essai utilisateur sur C3/101 retourne désormais 64 archives pour le 18 septembre 2026, avec `complete=true` et aucune erreur. | La piste 103 et le mode auto restent à comparer ; une erreur de piste secondaire n’est pas une cause terrain confirmée. |
+| Namespaces | Le parser retirait déjà les namespaces. Le relevé C3/101 accepte maintenant `DeviceInfo`, `TrackList` et `CMSearchResult` avec le namespace observé `http://www.std-cgi.com/ver20/XMLSchema`. | Un problème de namespace n’est pas démontré par le message générique initial. |
+
+Le relevé utilisateur C3/101 confirme la découverte des pistes 101 et 103,
+puis la pagination de **101 uniquement** : 50 résultats (`MORE`, position 0),
+puis 14 (`OK`, position 50). Le processus caméra utilise le même Python 3.9.13
+que le parent. Cette réussite valide la recherche sur cette caméra/piste/journée ;
+le téléchargement, la préparation et la lecture vidéo restent à essayer.
+`camera_zone_configured=false` n’est pas un blocage pour ces réponses ISAPI UTC.
 
 Les commandes ci-dessous sont à lancer volontairement dans PowerShell, depuis
 la racine `Camera`. Fermer les anciennes fenêtres au moment choisi pour charger

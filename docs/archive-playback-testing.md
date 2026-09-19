@@ -1,10 +1,17 @@
 # Essais de Playback — à lancer par l’utilisateur
 
-**Les tests de cette correction restent à exécuter par l’utilisateur.** Le premier
-lancement rapporté avec Python 3.14 a échoué à l’import de `cryptography`, avant
-tout test. Le retour de l’interface est documenté dans le
-[guide de diagnostic des blocages](archive-playback-diagnostics.md). Les commandes
-ci-dessous sont à lancer depuis le dossier `Camera`, quand le poste est disponible.
+**Dernier essai utilisateur sous Python 3.9.13 : 43 tests réussis sur 44.**
+Le seul échec intervient au nettoyage d’une base SQLite temporaire, après les
+assertions. La connexion du montage de test est maintenant fermée explicitement ;
+la relance après cette correction reste à effectuer par l’utilisateur. La première
+trace Python 3.14 échouait à l’import, avant tout test.
+
+Le diagnostic réel C3/101 du 18 septembre 2026 retourne 64 archives en deux pages,
+avec une recherche complète et sans erreur. Il ne valide pas le téléchargement
+ni la lecture. Ces résultats et les étapes restantes sont documentés dans le
+[guide de diagnostic des blocages](archive-playback-diagnostics.md). L’agent
+n’a lancé aucun test ni appel caméra. Les commandes ci-dessous sont à lancer
+depuis le dossier `Camera`, quand le poste est disponible.
 Ne démarrez pas deux essais vidéo simultanément. Fermez le premier lecteur et
 attendez sa fermeture complète avant de passer à la deuxième caméra.
 

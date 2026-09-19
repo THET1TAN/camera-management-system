@@ -1,4 +1,5 @@
 """User-run regressions; HTTP is fake and all private files are temporary."""
+from contextlib import closing
 from dataclasses import replace
 from dataclasses import asdict
 from datetime import date
@@ -215,7 +216,8 @@ class EnvironmentAndConfigurationTests(unittest.TestCase):
             key = Fernet.generate_key()
             cipher = Fernet(key)
             (root/'.camera_encryption.key').write_bytes(key)
-            with sqlite3.connect(root/'camera_credentials.db') as db:
+            # Commit the fixture, then release its Windows file handle before cleanup.
+            with closing(sqlite3.connect(root/'camera_credentials.db')) as db, db:
                 db.execute('CREATE TABLE cameras (id INTEGER, ip BLOB, username BLOB, password BLOB)')
                 db.execute('INSERT INTO cameras VALUES (42,?,?,?)',
                            tuple(cipher.encrypt(value.encode()) for value in ('192.0.2.99', 'test', 'test-secret')))
