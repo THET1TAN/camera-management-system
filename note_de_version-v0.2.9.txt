@@ -3,52 +3,22 @@ Date : 18 septembre 2026
 PR : https://github.com/THET1TAN/camera-management-system/pull/12
 Issue : https://github.com/THET1TAN/camera-management-system/issues/9
 
-Reconnexion RTSP non bloquante
-----------------------------
-- Chaque session VLC est isolée dans un processus supervisé. Les appels natifs
-  et la découverte ONVIF ne bloquent plus Tk. Les callbacks VLC publient seulement
-  des notifications ; ils ne rappellent pas libVLC.
-- Reprise automatique avec attentes bornées et remplacement des sessions bloquées.
-  La fenêtre reste fermable pendant une panne. Des images décodées et affichées
-  doivent progresser avant d'annoncer la reprise.
-- URI ONVIF complète et premier profil conservés : compatibilité multimarque,
-  adresses avec schéma/port et IPv6. Aucun chemin Hikvision ni codec imposé.
-- Journaux tournants et relais terminal borné, sans URI authentifiée ni SOAP privé.
+Nouveautés et corrections
+------------------------
+- Reconnexion automatique après une interruption RTSP, avec tentatives espacées
+  et remplacement des sessions bloquées lorsque nécessaire.
+- Correction des gels de l'interface pendant une panne, une reconnexion ou la
+  fermeture : chaque session VLC s'exécute dans un processus supervisé, et les
+  callbacks ne déclenchent plus directement d'opérations de contrôle du lecteur.
+- Affichage d'un état de connexion pendant une interruption pour ne pas laisser
+  une image figée paraître en direct. La reprise est confirmée par la progression
+  des images décodées et affichées.
+- Journaux tournants de taille limitée et relais vers le terminal pour suivre
+  les sessions, tentatives de reconnexion et opérations natives.
+- Correction du calcul du débit lorsque le compteur VLC dépasse 2 Gio ; un tour
+  complet du compteur réinitialise la mesure sans pic artificiel.
+- Banc RTSP synthétique local pour reproduire les coupures et vérifier la reprise
+  vidéo, le retour du débit, la réactivité de l'interface et l'arrêt des processus.
 
-Comportements conservés et corrections de régression
----------------------------------------------------
-- Icônes son/sourdine, bouton et titre « (Muted) » conservés ; la sourdine survit
-  à la reconnexion. Aucun curseur de volume ajouté.
-- Débit moyen sur cinq mesures espacées d'au moins une seconde ; affichage chaque
-  seconde, deux décimales, « -- Mbps » si indisponible. Les compteurs signés de VLC
-  sont interprétés correctement au-delà de 2 Gio ; un tour complet à 4 Gio remet
-  la référence à zéro sans pic artificiel.
-- Réglages de lecture de la v0.2.8 conservés, dont les caches de 50 ms.
-- PTZ r9 B, arrêts PTZ, disponibilité des caméras et stockage chiffré inchangés.
-- L'audit des régressions et leur origine est dans docs/player-compatibility-audit.md.
-
-Validation et limites
---------------------
-- 246 tests automatisés passent. Résultats détaillés : docs/player-recovery-results.md.
-- Dernier banc Windows/libVLC : 2/2 reprises après coupure de 5 s et silence de
-  30 s, images changeantes, débit revenu à 0,36 / 0,41 Mbps, témoin stable,
-  aucun processus média restant. Reprises en 10,534 / 7,399 s ; écart Tk maximal
-  483 ms ; fermeture en 0,323 s. Le précédent banc de 20 cycles est documenté
-  séparément, avec ses anciens réglages.
-- Joël a rapporté une récupération sur caméra réelle et autorisé la fusion et
-  la clôture de l'issue le 18 septembre. Le lien exact entre l'incident de débit
-  de cette caméra et le compteur signé reste à confirmer par un nouvel essai.
-- H.265/H.265+, UDP, écoute sonore, perte réelle du GPU et build EXE non validés.
-  Aucun nouvel exécutable n'est livré ; cette version distribue les sources Python.
-
-Installation et conservation
-----------------------------
-- La racine active et le dossier ~v0.2.9 contiennent les mêmes sources publiques.
-  Les anciennes versions restent intactes. Le snapshot inclut sources, icônes,
-  documentation, tests et banc RTSP ; aucune base, clé, configuration privée ou log.
-- Fermer le Viewer et ses fenêtres avant de relancer camera_viewer.py depuis le
-  dossier actif avec les dépendances installées et la base existante.
-- Conserver camera_credentials.db et sa .camera_encryption.key existante ensemble.
-  Aucune migration de base, clé ou réglage caméra n'est nécessaire.
-- Les tests du snapshot utilisent le dossier frère ~v0.2.8 comme référence de
-  lecture. Retour arrière : sources de ~v0.2.8 avec la base et sa clé correspondante.
+Résultats des tests et limites : docs/player-recovery-results.md.
+Guide de diagnostic et de test : docs/player-recovery.md.

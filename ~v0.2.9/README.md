@@ -5,17 +5,16 @@
 Released September 18, 2026, through
 [PR #12](https://github.com/THET1TAN/camera-management-system/pull/12), resolving
 [issue #9](https://github.com/THET1TAN/camera-management-system/issues/9).
-Each VLC session runs in a supervised process: an RTSP interruption leaves the
-window responsive and closable, and playback retries automatically when the
-source returns. VLC callbacks only notify their owner; they never stop or
-recreate a player themselves.
 
-ONVIF discovery preserves the camera's actual stream URI and first profile across
-brands, with no Hikvision path or camera codec imposed. The existing mute icons
-and toggle behavior, five-reading bitrate average, one-second display refresh,
-50 ms playback caches, PTZ r9 B and camera availability monitor are retained.
-The byte-counter rollover fix prevents valid VLC statistics above 2 GiB from
-leaving the bitrate at `-- Mbps`; session replacement starts a fresh average.
+- **Automatic RTSP recovery:** an interrupted stream reconnects when the source
+  returns. Supervised VLC sessions keep the window responsive and closable even
+  when a native playback operation hangs.
+- **Visible connection status:** a status message covers a stale image during
+  an outage; recovery is confirmed by new decoded and displayed frames.
+- **Bounded diagnostics:** rotating logs and terminal output record session
+  changes, retry attempts and native operations to help diagnose failures.
+- **Bitrate counter fix:** valid VLC byte counts above 2 GiB no longer leave the
+  display at `-- Mbps`; a full counter rollover starts a new measurement baseline.
 
 Root sources and [`~v0.2.9`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.9)
 contain this version. Older source snapshots remain unchanged. The version
@@ -25,10 +24,9 @@ application directory with its existing database and dependencies.
 
 See the [v0.2.9 release notes](note_de_version-v0.2.9.txt),
 [architecture, diagnostics and reproducible tests](docs/player-recovery.md),
-[validation results and remaining limits](docs/player-recovery-results.md), and
-[v0.2.8 compatibility audit](docs/player-compatibility-audit.md).
+and [validation results and remaining limits](docs/player-recovery-results.md).
 
-## Camera availability retained from v0.2.8
+## Camera availability
 
 Introduced September 16, 2026 through
 [PR #11](https://github.com/THET1TAN/camera-management-system/pull/11), implementing
@@ -57,7 +55,7 @@ See [availability behavior and configuration](docs/camera-availability.md) and
 from the active application directory with its existing database.
 The version folders are source snapshots; private databases and keys are excluded.
 
-## PTZ behavior retained from v0.2.7 — r9 B
+## PTZ controller — r9 B
 
 Released in v0.2.7 on September 12, 2026. The r9 B controller handles partial key
 releases and simultaneous camera movement with optical zoom.
