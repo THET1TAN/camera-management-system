@@ -1,0 +1,44 @@
+# Camera Management System v0.2.7 — PTZ r9 B
+
+Release date: September 12, 2026.
+The user approved r9 B for main after testing partial releases and simultaneous
+camera movement with optical zoom. This release replaces the restored pre-r8
+baseline. The source snapshot is ~v0.2.7.
+
+## Released behavior
+
+- Normal camera_viewer.py startup now selects sequential r9 B without a special
+  test launcher or environment setting. The PTZ title identifies v0.2.7 r9 and
+  Neutral transition B.
+- On a partial release or direction reversal, a full neutral velocity command
+  completes before the latest held pan, tilt and zoom axes are reapplied together.
+- Same-sign speed changes remain direct. Unchanged motion is renewed according
+  to the camera's advertised timeout. Velocity spaces and ranges come from ONVIF
+  capability discovery, without manufacturer-specific movement code.
+- Full release, input expiry, loss of focus and shutdown retain explicit stops.
+- Viewer, Manager, player and PTZ children share their parent's Python interpreter
+  and close with their parent.
+- The installation's encryption key and camera database remain local and private.
+
+## Known limitation
+
+A short pause remains when releasing one axis of a diagonal. The observed B
+neutral response median was about 272 ms; this is a network response measurement,
+not a direct measurement of motor latency. This release does not claim to remove
+that pause or establish universal camera compatibility.
+
+The early-resume C experiment was withdrawn after a stuck-diagonal regression.
+Its old launcher redirects to B and stale C settings cannot enable overlap.
+Its source and report remain solely for historical analysis. r8 remains withdrawn
+and is preserved separately in draft PR #8 and the historical ~v0.2.6 snapshot.
+
+## Validation
+
+162 automated tests pass, including ordinary startup selecting B with no test
+environment, legacy C fallback, keyboard release handling, delayed requests,
+native timeout renewals, key storage and child-window ownership. Some tests cover
+the archived C experiment and are not evidence of its physical correctness.
+The B command engine is unchanged from the user-tested reference.
+
+Use the Python sources; existing locally built executables are not rebuilt by
+this source release. Close old application windows before launching the update.

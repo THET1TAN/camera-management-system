@@ -1,0 +1,9 @@
+{
+  "1": {
+    "onvif_url": "http://192.0.2.10:8080/onvif/device_service"
+  },
+  "2": {
+    "onvif_url": "http://192.0.2.20/onvif/device_service",
+    "rtsp_url": "rtsp://192.0.2.20:8554/stream"
+  }
+}
