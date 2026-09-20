@@ -18,7 +18,7 @@ from playback.server import Playlist, SessionServer
 from playback.store import Store
 
 
-def copy_pair(directory, camera_id):
+def copy_pair(directory, camera_id, pair_start=None):
     """Copy only completed originals; the real cache is read-only throughout."""
     from cryptography.fernet import Fernet
     settings = load_settings()
@@ -31,7 +31,7 @@ def copy_pair(directory, camera_id):
         db.close()
     records = [(key, json.loads(cipher.decrypt(sealed)), json.loads(media)) for key, sealed, media in rows if media]
     pair = next(((a,b) for a,b in zip(records, records[1:]) if
-        a[1]['device'] == b[1]['device'] and a[1]['track'] == b[1]['track'] and
+        (pair_start is None or abs(a[1]['start']-pair_start)<.001) and a[1]['device'] == b[1]['device'] and a[1]['track'] == b[1]['track'] and
         abs(b[1]['start']-(a[1]['start']+a[2]['duration'])) <= .5 and
         all((settings.cache_path/v[0]/'original.bin').is_file() for v in (a,b))), None)
     if not pair:
@@ -57,7 +57,7 @@ def warm(directory, camera_id):
     result = backend.list_recordings(min(r['start'] for r in rows), max(r['end'] for r in rows), cancel)
     if len(result.records) < 2:
         raise PlaybackError('two-native-archives-required')
-    store = Store(settings, cipher)
+    store = Store(settings, cipher, allow_sync=True)
     report = []
     try:
         store.record_search(camera_id, min(r['start'] for r in rows), max(r['end'] for r in rows), backend.device, result)
@@ -70,9 +70,11 @@ def warm(directory, camera_id):
             info = probe(original, settings, cancel)
             try:
                 bounds = packet_bounds(original, settings, cancel)
+                audio_bounds = packet_bounds(original, settings, cancel, stream='a:0') if info['audio'] else None
                 bounds_reason = ''
             except PlaybackError as exc:
                 bounds, bounds_reason = None, exc.code
+                audio_bounds = None
             # Each run gets a new bench directory; completed derivatives survive
             # repeated --warm. Never clear original evidence to force a cold run.
             segments, complete = read_segments(dest, r, timing=True, video_offset=info.get('video_start_offset', 0.))
@@ -82,6 +84,7 @@ def warm(directory, camera_id):
             store.state(r.key, 'prepared', info)
             report.append(dict(archive_id=r.key[:12], start=r.start, source_duration=info['duration'],
                 container=info['container'], video=info['video'], audio=info['audio'],
+                frame_rate=info.get('frame_rate'), source_audio_packet_bounds=audio_bounds,
                 source_start=info['source_start'], source_video_packet_bounds=bounds,
                 source_packet_audit_error=bounds_reason,
                 segment_count=len(segments), first_pts=segments[0].first_pts,
@@ -96,13 +99,15 @@ def warm(directory, camera_id):
 
 def serve(directory, camera_id, legacy, before):
     settings, _, cipher, data = load_fixture(directory)
-    store = Store(settings, cipher)
-    server = SessionServer()
+    store = Store(settings, cipher, allow_sync=True)
+    server = SessionServer(store=store)
     try:
         rows = [r for r in data['recordings'] if r['camera_id'] == camera_id]
         entries = store.entries((camera_id,), min(r['start'] for r in rows), max(r['end'] for r in rows))
         if len(entries) < 2 or any(e.state != 'prepared' for e in entries):
             raise PlaybackError('run-warm-first')
+        for entry in entries:
+            store.pin(entry.recording.key, 'boundary-bench')
         groups = [(e.recording.key, read_segments(store.path(e.recording.key), e.recording, timing=True,
                    video_offset=e.media.get('video_start_offset', 0.))[0]) for e in entries]
         boundary = entries[1].recording.start
@@ -137,13 +142,14 @@ def main():
     action.add_argument('--warm', action='store_true')
     action.add_argument('--serve', action='store_true')
     parser.add_argument('--legacy-clocks', action='store_true')
+    parser.add_argument('--pair-start', type=float, help='Exact UTC timestamp of the first archive; avoids selecting an older pair')
     parser.add_argument('--before', type=float, default=20.)
     args = parser.parse_args()
     directory = Path(args.directory).resolve()
     if not 1 <= args.before <= 120:
         parser.error('--before must be between 1 and 120 seconds')
     if args.from_cache:
-        copy_pair(directory, args.camera)
+        copy_pair(directory, args.camera, args.pair_start)
     elif args.warm:
         warm(directory, args.camera)
     else:

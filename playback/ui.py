@@ -7,12 +7,13 @@ import math
 import time
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 from zoneinfo import ZoneInfo
 
 from .config import ROOT
 from .controller import Controller
-from .model import Controls, Viewport, day_bounds, local_candidates, layout_mode
+from .model import Controls, Viewport, day_bounds, local_candidates, layout_mode, parse_time, PlaybackError
+from .storage_ui import StoragePanel
 from .presentation import DAY_STATES, ACTIONS, COLORS as C, CAMERA_COLORS, STATES, error_text, TEXT, MONTHS, WEEKDAYS
 from .widgets import Icons, IconButton, Help, styles
 
@@ -58,6 +59,12 @@ class PlaybackWindow:
         self.position = time.time()
         self.view = Viewport(self.position-900)
         self.mark_a = self.mark_b = None
+        self.selection_camera = None
+        self.selection_track = ""
+        self.selecting = False
+        self.selection_drag = None
+        self.timeline_fingerprint = None
+        self.export_prompt_seen = None
         self.calendar_snapshot = None
         self.controls = Controls()
         self.icons = Icons(self.window)
@@ -170,12 +177,20 @@ class PlaybackWindow:
     def _video(self):
         self.video = frame(self.area, '#080d14')
         self.video.grid(row=0,column=1,sticky='nsew')
-        self.surface = frame(self.video,'#080d14')
+        self.video.grid_rowconfigure(0,weight=1)
+        self.video.grid_columnconfigure(0,weight=1)
+        self.picture = frame(self.video, '#080d14')
+        self.picture.grid(row=0,column=0,sticky='nsew')
+        self.surface = frame(self.picture,'#080d14')
         self.surface.place(x=0,y=0,relwidth=1,relheight=1)
-        self.overlay = tk.Label(self.video,text=TEXT['choose_camera'],
-            bg='#080d14',fg=C['secondary'],font=('Segoe UI',13),justify='center',wraplength=420)
-        self.overlay.place(x=0,y=0,relwidth=1,relheight=1)
-        self.overlay.lift()
+        self.status_area = frame(self.video, height=round(76*self.icons.scale))
+        self.status_area.grid(row=1,column=0,sticky='ew')
+        self.status_area.grid_propagate(False)
+        self.status_area.grid_columnconfigure(0,weight=1)
+        self.overlay = label(self.status_area,TEXT['choose_camera'],secondary=True,
+                             justify='left',anchor='nw',wraplength=420)
+        self.overlay.grid(row=0,column=0,sticky='nsew',padx=8,pady=6)
+        self.button(self.status_area,'details',lambda:self.show_tab(1)).grid(row=0,column=1,sticky='ne',padx=4,pady=4)
 
     def _commands(self):
         self.commands = frame(self.area)
@@ -219,6 +234,8 @@ class PlaybackWindow:
         bar.grid(row=0,column=0,columnspan=2,sticky='ew',padx=8,pady=5)
         self.time_label = label(bar,'—',size=11)
         self.time_label.pack(side='left',fill='x',expand=True)
+        self.selection_button = self.button(bar,'select_range',self.toggle_selection,text=True)
+        self.selection_button.pack(side='right',padx=2)
         self.button(bar,'zoom_out',lambda:self.zoom(2)).pack(side='right',padx=2)
         self.button(bar,'zoom_in',lambda:self.zoom(.5)).pack(side='right',padx=2)
         self.timeline = tk.Canvas(self.timeframe,height=110,bg=C['background'],highlightthickness=0,takefocus=True)
@@ -238,18 +255,26 @@ class PlaybackWindow:
         self.horizontal.grid(row=2,column=0,columnspan=2,sticky='ew',padx=8,pady=3)
         self.timeline_legend = label(self.timeframe,TEXT['timeline_legend'],
                                      secondary=True,size=9,anchor='w',justify='left',wraplength=460)
-        self.timeline_legend.grid(row=3,column=0,columnspan=2,sticky='ew',padx=8,pady=(0,6))
+        self.timeline_legend.grid(row=3,column=0,rowspan=1,columnspan=2,sticky='ew',padx=8,pady=(0,6))
 
     def _details_panel(self):
-        self.details.grid_rowconfigure(0,weight=1)
-        self.details.grid_columnconfigure(0,weight=1)
-        self.detail_text = tk.Text(self.details,wrap='word',width=30,height=8,bg=C['panel'],fg=C['text'],
+        canvas = tk.Canvas(self.details,bg=C['panel'],highlightthickness=0)
+        canvas.pack(side='left',fill='both',expand=True)
+        outer_scroll = ttk.Scrollbar(self.details,command=canvas.yview)
+        outer_scroll.pack(side='right',fill='y')
+        canvas.config(yscrollcommand=outer_scroll.set)
+        inner = frame(canvas)
+        slot = canvas.create_window(0,0,window=inner,anchor='nw')
+        canvas.bind('<Configure>',lambda e:canvas.itemconfigure(slot,width=e.width))
+        inner.bind('<Configure>',lambda _e:canvas.config(scrollregion=canvas.bbox('all')))
+        inner.grid_columnconfigure(0,weight=1)
+        self.detail_text = tk.Text(inner,wrap='word',width=30,height=8,bg=C['panel'],fg=C['text'],
             font=('Segoe UI',10),bd=0,padx=10,pady=10,state='disabled')
         self.detail_text.grid(row=0,column=0,sticky='nsew')
-        scroll = ttk.Scrollbar(self.details,command=self.detail_text.yview)
+        scroll = ttk.Scrollbar(inner,command=self.detail_text.yview)
         scroll.grid(row=0,column=1,sticky='ns')
         self.detail_text.config(yscrollcommand=scroll.set)
-        box = frame(self.details)
+        box = frame(inner)
         box.grid(row=1,column=0,columnspan=2,sticky='ew',padx=8,pady=8)
         self.original_button = self.button(box,'original',lambda:self.export(False),text=True)
         self.original_button.pack(fill='x',pady=3)
@@ -262,6 +287,13 @@ class PlaybackWindow:
             self.help.bind(button,TEXT['mark_help_prefix']+(TEXT['mark_start'] if which=='a' else TEXT['mark_end'])+TEXT['mark_help_suffix'])
         self.range_label = label(box,TEXT['no_selection'],secondary=True,anchor='w',wraplength=270)
         self.range_label.pack(fill='x',pady=4)
+        self.range_inputs = {}
+        for name,title in (('start','Start (ISO date/time)'),('end','End (ISO date/time)'),('track','Recording track')):
+            label(box,title,secondary=True,anchor='w').pack(fill='x')
+            entry = ttk.Entry(box)
+            entry.pack(fill='x',pady=(0,3))
+            self.range_inputs[name] = entry
+        self.button(box,'apply',self.apply_selection,text=True,tip='Apply selection times without seeking').pack(fill='x',pady=3)
         self.export_button = self.button(box,'export',lambda:self.export(True),text=True)
         self.export_button.pack(fill='x',pady=3)
         self.cancel_button = self.button(box,'cancel',lambda:self.controller.cancel_export() if self.controller else None,text=True)
@@ -298,6 +330,7 @@ class PlaybackWindow:
         label(inner,TEXT['settings_help'],secondary=True,justify='left',wraplength=270).pack(fill='x',padx=10,pady=12)
         self.apply_button = self.button(inner,'apply',self.apply_settings,text=True)
         self.apply_button.pack(fill='x',padx=10,pady=8)
+        self.storage_panel = StoragePanel(self,inner)
 
     def _start(self):
         self.start_timer = None
@@ -394,17 +427,10 @@ class PlaybackWindow:
             text += TEXT['background_download'].format(received=status.received/1048576, expected=status.expected/1048576)
         if status.reason:
             text += '\n'+error_text(status.reason)
-        self.overlay.config(text=text,wraplength=max(200,self.video.winfo_width()-60))
-        if status.state in ('PLAYING','PAUSED','PREVIEW'):
-            self.overlay.place_forget()
-        elif status.state in ('SEEKING','PREVIEW_LOADING') and self.controller.engine and self.controller.engine.snapshot.displayed:
-            # Keep the native surface visible. The requested time is explicitly
-            # separate from the last confirmed preview; stale pixels aren't a hit.
-            self.overlay.place(x=0,y=0,relx=0,rely=1,anchor='sw',relwidth=1,relheight=0,height=68)
-            self.overlay.lift()
-        else:
-            self.overlay.place(x=0,y=0,relx=0,rely=0,anchor='nw',relwidth=1,relheight=1,height=0)
-            self.overlay.lift()
+        self.status_message=text
+        self.overlay.config(text=text.split('\n')[0]+(' · Details' if status.reason else ''),wraplength=max(160,self.video.winfo_width()-70))
+        # Status occupies a permanently reserved row outside the native HWND.
+        # Even a last known preview stays unobscured during loading and errors.
         try:
             instant = datetime.fromtimestamp(self.position,ZoneInfo(self.zone))
             shown = instant.strftime('%Y-%m-%d  %H:%M:%S %Z')
@@ -420,17 +446,25 @@ class PlaybackWindow:
         self.notice.config(text=text.split('\n')[0])
         self.play_button.set_action('play' if self.controls.paused or status.state in ('IDLE','STOPPED','GAP','ERROR','CONFIGURATION','ENDED') else 'pause')
         self.original_button.set_enabled(bool(status.key), TEXT['original_disabled'])
-        self.export_button.set_enabled(bool(status.key and self.mark_a is not None and self.mark_b is not None and self.mark_b>self.mark_a),
+        self.export_button.set_enabled(bool(self.selection_camera and self.selection_track and self.mark_a is not None and self.mark_b is not None and self.mark_b>self.mark_a),
                                        TEXT['export_disabled'])
         self.cancel_button.set_enabled(self.controller.export_request is not None,TEXT['cancel_disabled'])
         export = self.controller.export_status
         self.export_label.config(text={'pending':TEXT['export_pending'],'working':TEXT['export_working'],
-            'complete':TEXT['export_complete'],'cancelled':TEXT['export_cancelled']}.get(export,error_text(export)))
+            'complete':TEXT['export_complete'],'cancelled':TEXT['export_cancelled']}.get(export,error_text(export) if '-' in export and ' ' not in export else export))
         if self.calendar_snapshot is not self.controller.calendar or self.diagnostic_snapshot is not self.controller.diagnostic_events:
             self.calendar_snapshot = self.controller.calendar
             self.diagnostic_snapshot = self.controller.diagnostic_events
             self._paint_calendar()
             self._show_details()
+        self.storage_panel.poll()
+        prompt = self.controller.exporter.prompt if self.controller.exporter else None
+        if prompt and prompt is not self.export_prompt_seen:
+            self.export_prompt_seen = prompt
+            missing = '\n'.join(datetime.fromtimestamp(a,ZoneInfo(self.zone)).isoformat()+' → '+datetime.fromtimestamp(b,ZoneInfo(self.zone)).isoformat() for a,b in prompt['gaps'][:12])
+            choice = messagebox.askyesnocancel('Missing recordings',
+                missing+'\n\nYes: keep elapsed time with neutral “No recording” sections.\nNo: export available portions and list missing intervals.\nCancel: cancel and modify the selection.',parent=self.window)
+            self.controller.exporter.decide('neutral' if choice is True else 'available' if choice is False else 'cancel')
         self._draw_timeline()
         self.timer = self.window.after(200,self._poll)
 
@@ -503,7 +537,7 @@ class PlaybackWindow:
     def _show_details(self):
         if not self.controller:
             return
-        lines=[self.selected.strftime('%Y-%m-%d')+' · '+self.zone, '', TEXT['availability']]
+        lines=[getattr(self,'status_message',''), '', self.selected.strftime('%Y-%m-%d')+' · '+self.zone, '', TEXT['availability']]
         configure_ids=[]
         for cid in self.selected_ids():
             info=self.controller.calendar.get((cid,self.selected),{})
@@ -677,7 +711,7 @@ class PlaybackWindow:
             self.view=Viewport(self.view.start+int(args[1])*self.view.span*.2,self.view.span)
         self._draw_timeline()
 
-    def _draw_timeline(self):
+    def _draw_base(self):
         if not hasattr(self,'timeline'):
             return
         canvas=self.timeline
@@ -726,15 +760,63 @@ class PlaybackWindow:
                         x2=58+min(1,(s.start+s.duration-self.view.start)/self.view.span)*width
                         canvas.create_line(x1,y+5,x2,y+5,fill=C['accent'],width=4)
         height=38+28*max(1,len(ids))
-        for stamp,color,letter in ((self.position,C['text'],''),(self.mark_a,'#e9bc73','A'),(self.mark_b,'#e9bc73','B')):
-            if stamp is not None and self.view.start<=stamp<=end:
-                x=58+(stamp-self.view.start)/self.view.span*width
-                canvas.create_line(x,23,x,height,fill=color,width=2)
-                if letter:
-                    canvas.create_text(x+7,height-8,text=letter,fill=color)
         canvas.config(scrollregion=(0,0,width+58,height))
         a,b=day_bounds(self.selected,self.zone)
         self.horizontal.set(max(0,min(1,(self.view.start-a)/(b-a))),max(0,min(1,(end-a)/(b-a))))
+
+    def _draw_timeline(self):
+        if not hasattr(self,'timeline'):
+            return
+        began = time.monotonic()
+        canvas=self.timeline
+        ids=tuple(self.selected_ids())
+        entries=self.controller.entries if self.controller else ()
+        playlist=self.controller.active_playlist if self.controller else None
+        fingerprint=(self.view,canvas.winfo_width(),ids,id(entries),self.zone,
+                     tuple((key,len(parts)) for key,parts in playlist.groups) if playlist else ())
+        rebuilt=fingerprint != self.timeline_fingerprint
+        if rebuilt:
+            self._draw_base()
+            self.timeline_fingerprint=fingerprint
+        canvas.delete('cursor')
+        canvas.delete('selection')
+        width=max(1,canvas.winfo_width()-58)
+        end=self.view.start+self.view.span
+        height=38+28*max(1,len(ids))
+        if self.selection_camera in ids and self.mark_a is not None and self.mark_b is not None:
+            y=28+ids.index(self.selection_camera)*28
+            a,b=sorted((self.mark_a,self.mark_b))
+            x1=58+max(0,min(1,(a-self.view.start)/self.view.span))*width
+            x2=58+max(0,min(1,(b-self.view.start)/self.view.span))*width
+            if a<end and b>self.view.start:
+                canvas.create_rectangle(x1,y,x2,y+22,outline='#e9bc73',fill='#e9bc73',stipple='gray25',width=2,tags='selection')
+        for stamp,color,letter in ((self.position,C['text'],''),(self.mark_a,'#e9bc73','A'),(self.mark_b,'#e9bc73','B')):
+            if stamp is not None and self.view.start<=stamp<=end:
+                x=58+(stamp-self.view.start)/self.view.span*width
+                canvas.create_line(x,23,x,height,fill=color,width=3 if letter else 2,tags='selection' if letter else 'cursor')
+                if letter:
+                    canvas.create_text(x+7,height-8,text=letter,fill=color,tags='selection')
+        if self.controller and self.controller.log and time.monotonic()-getattr(self,'draw_logged',0)>2:
+            self.draw_logged=time.monotonic()
+            self.controller.log.event('timeline-render',camera_id=self.camera_id,session_id=self.controller.active_request[0] if self.controller.active_request else 0,elapsed=time.monotonic()-began,mode='base' if rebuilt else 'cursor')
+
+    def toggle_selection(self):
+        self.selecting=not self.selecting
+        self.selection_button.config(text="Select range: ON" if self.selecting else "Select range")
+        self.footer.config(text='Selection mode: drag a range or an A/B handle. Playback does not move.' if self.selecting else 'Scrub mode: drag to preview; release to seek.')
+        self.timeline.config(cursor='crosshair' if self.selecting else '')
+
+    def _bind_selection(self):
+        if self.selection_camera == self.camera_id and self.selection_track:
+            return
+        if self.selection_camera != self.camera_id:
+            self.mark_a=self.mark_b=None
+        self.selection_camera=self.camera_id
+        tracks=sorted({e.recording.track for e in self.controller.entries if e.recording.camera_id==self.camera_id}) if self.controller else []
+        configured=self.controller.settings.cameras.get(str(self.camera_id),{}).get('track','') if self.controller and self.controller.settings else ''
+        self.selection_track=configured or (tracks[0] if len(tracks)==1 else '')
+        if self.controller and self.controller.view.camera_id==self.camera_id and self.controller.view.track:
+            self.selection_track=self.controller.view.track
 
     def _drag_start(self,event):
         self.timeline.focus_set()
@@ -743,22 +825,57 @@ class PlaybackWindow:
         if 0<=row<len(ids):
             self.camera_id=ids[row]
             self.camera_choice.set(f'C{self.camera_id}')
+        if self.selecting:
+            self._bind_selection()
+            width=max(1,self.timeline.winfo_width()-58)
+            stamp=self.view.at(event.x-58,width)
+            near=lambda value:value is not None and abs((value-stamp)/self.view.span*width)<10
+            if near(self.mark_a):
+                self.selection_drag=('a',stamp,self.mark_a,self.mark_b)
+            elif near(self.mark_b):
+                self.selection_drag=('b',stamp,self.mark_a,self.mark_b)
+            elif self.mark_a is not None and self.mark_b is not None and self.mark_a<stamp<self.mark_b:
+                self.selection_drag=('move',stamp,self.mark_a,self.mark_b)
+            else:
+                self.mark_a=self.mark_b=stamp
+                self.selection_drag=('b',stamp,stamp,stamp)
+            self._drag(event)
+            return
         self.dragging=True
         self._drag(event)
 
     def _drag(self,event):
-        self.position=self.view.at(event.x-58,max(1,self.timeline.winfo_width()-58))
-        if self.seek_timer is None:
-            self.seek_timer=self.window.after(125,self._preview_seek)
+        stamp=self.view.at(event.x-58,max(1,self.timeline.winfo_width()-58))
+        if getattr(self,'selection_drag',None):
+            mode,anchor,a,b=self.selection_drag
+            if mode=='move':
+                self.mark_a,self.mark_b=a+stamp-anchor,b+stamp-anchor
+            elif mode=='a':
+                self.mark_a=stamp
+            else:
+                self.mark_b=stamp
+            self._show_selection()
+        else:
+            self.position=stamp
+            self.pointer_at=time.monotonic()
+            if self.seek_timer is None:
+                self.seek_timer=self.window.after(125,self._preview_seek)
         self._draw_timeline()
 
     def _preview_seek(self):
         self.seek_timer=None
         if self.dragging and not self.closing and self.controller and self.initialized and self.camera_id is not None:
             self.controller.seek(self.camera_id,self.position,preview=True)
+            if self.controller.log:
+                self.controller.log.event('pointer-target',camera_id=self.camera_id,session_id=self.controller.active_request[0] if self.controller.active_request else 0,position=self.position,elapsed=time.monotonic()-getattr(self,'pointer_at',time.monotonic()))
 
     def _drag_end(self,event):
         self._drag(event)
+        if getattr(self,'selection_drag',None):
+            self.mark_a,self.mark_b=sorted((self.mark_a,self.mark_b))
+            self.selection_drag=None
+            self._show_selection()
+            return
         self.dragging=False
         self._commit_seek()
 
@@ -768,25 +885,53 @@ class PlaybackWindow:
             self.seek_timer=None
         self.seek(self.position)
 
+    def _show_selection(self):
+        show=lambda stamp:datetime.fromtimestamp(stamp,ZoneInfo(self.zone)).isoformat(timespec='milliseconds') if stamp is not None else ''
+        self.range_label.config(text=f'C{self.selection_camera or "—"} · Track {self.selection_track or "choose"} · Duration {abs((self.mark_b or 0)-(self.mark_a or 0)):.3f} s' if self.mark_a is not None and self.mark_b is not None else 'Set start and end.')
+        for name,value in (('start',show(self.mark_a)),('end',show(self.mark_b)),('track',self.selection_track)):
+            self.range_inputs[name].delete(0,'end')
+            self.range_inputs[name].insert(0,value)
+
+    def apply_selection(self):
+        try:
+            a=parse_time(self.range_inputs['start'].get(),self.zone)
+            b=parse_time(self.range_inputs['end'].get(),self.zone)
+            track=self.range_inputs['track'].get().strip()
+            if a>=b or not track:
+                raise ValueError
+            self.mark_a,self.mark_b=a,b
+            self.selection_camera=self.selection_camera or self.camera_id
+            self.selection_track=track
+            self._show_selection()
+            self._draw_timeline()
+        except (ValueError,PlaybackError):
+            self.footer.config(text='Use increasing ISO date/times with UTC offsets and a recording track.')
+
     def mark(self,which):
+        self._bind_selection()
         if which=='a':
             self.mark_a=self.position
         else:
             self.mark_b=self.position
-        def show(stamp):
-            return datetime.fromtimestamp(stamp,ZoneInfo(self.zone)).strftime('%H:%M:%S') if stamp is not None else '—'
-        self.range_label.config(text=f'A {show(self.mark_a)} → B {show(self.mark_b)}')
+        self._show_selection()
         self._draw_timeline()
 
     def export(self,selection):
-        if not self.controller or not self.controller.view.key:
+        if not self.controller or (not selection and not self.controller.view.key):
             return
-        stamp=datetime.fromtimestamp(self.position,ZoneInfo(self.zone)).strftime('%Y%m%d-%H%M%S')
-        name=f'C{self.camera_id}-{stamp}'+('-selection.mkv' if selection else '-original.bin')
-        path=filedialog.asksaveasfilename(parent=self.window,title=TEXT['save_selection'] if selection else TEXT['save_original'],
-            initialfile=name,defaultextension='.mkv' if selection else '.bin')
+        stamp=datetime.fromtimestamp(self.mark_a if selection else self.position,ZoneInfo(self.zone)).strftime('%Y%m%d-%H%M%S')
+        cid=self.selection_camera if selection else self.camera_id
+        name=f'C{cid}-{stamp}'+('-selection.mp4' if selection else '-original.bin')
+        path=filedialog.asksaveasfilename(parent=self.window,title='Export selection — Precise (re-encoded)' if selection else TEXT['save_original'],
+            initialfile=name,defaultextension='.mp4' if selection else '.bin')
         if path:
-            self.controller.export(path,self.mark_a if selection else None,self.mark_b if selection else None)
+            try:
+                if selection:
+                    self.controller.export_selection(path,cid,self.selection_track,self.mark_a,self.mark_b)
+                else:
+                    self.controller.export(path)
+            except PlaybackError as exc:
+                self.footer.config(text=error_text(exc.code))
 
     def _load_fields(self):
         if not self.initialized:
@@ -844,6 +989,8 @@ class PlaybackWindow:
 
     def show_tab(self,index):
         self.panel_open=True
+        if index==1:
+            self._show_details()
         self.tabs.select(index)
         self._layout()
         if index==1:
@@ -875,15 +1022,14 @@ class PlaybackWindow:
         self.commands.grid_configure(row=1,column=1 if wide else 0,columnspan=1 if wide else 2)
         if wide:
             self.side.place_forget()
-            self.side.grid(row=0,column=0,rowspan=2,sticky='nsew',padx=(0,10))
+            self.side.grid(row=0,column=0,rowspan=2,columnspan=1,sticky='nsew',padx=(0,10))
             self.side.configure(width=round(320*self.icons.scale))
         else:
             self.side.grid_remove()
             if self.panel_open:
-                # A dismissible in-window drawer for short/compact layouts. The
-                # renderer behind it keeps the same HWND, media and dimensions.
-                self.side.place(x=0,y=0,width=min(width-28,round(360*self.icons.scale)),relheight=1)
-                self.side.lift()
+                # Compact navigation has its own grid row, outside the image.
+                self.side.configure(height=min(round(250*self.icons.scale), max(120,height//3)))
+                self.side.grid(row=3,column=0,rowspan=1,columnspan=2,sticky='ew',pady=(8,0))
             else:
                 self.side.place_forget()
         available=max(300,width-(350*self.icons.scale if wide else 32))

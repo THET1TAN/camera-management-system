@@ -10,11 +10,11 @@ from .model import PlaybackError, check_cancel
 
 
 class Process:
-    def __init__(self, args, *, stdin=None):
+    def __init__(self, args, *, stdin=None, background=False):
         self.job = None
         self.process = subprocess.Popen(args, stdin=stdin if stdin is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            creationflags=(subprocess.CREATE_NO_WINDOW | (subprocess.BELOW_NORMAL_PRIORITY_CLASS if background else 0)) if os.name == 'nt' else 0)
         if os.name == 'nt':
             try:
                 self._own_windows()
@@ -67,9 +67,9 @@ class Process:
                     stream.close()
 
 
-def run(args, cancel, timeout=60, tick=None, limit=2*1024*1024, input_chunks=None, allow_early_input_close=False):
+def run(args, cancel, timeout=60, tick=None, limit=2*1024*1024, input_chunks=None, allow_early_input_close=False, background=False):
     try:
-        owned = Process(args, stdin=subprocess.PIPE if input_chunks is not None else None)
+        owned = Process(args, stdin=subprocess.PIPE if input_chunks is not None else None, background=background)
     except OSError:
         raise PlaybackError('dependency-missing') from None
     output = bytearray()

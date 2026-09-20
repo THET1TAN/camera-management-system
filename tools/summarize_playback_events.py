@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from playback.diagnostics import safe_fields
 
-MILESTONES = {'first-byte', 'first-progress', 'prefix-analysis', 'prefix-result',
+MILESTONES = {'pointer-target', 'timeline-render', 'preview-confirmed', 'preview-abandoned', 'first-byte', 'first-progress', 'prefix-analysis', 'prefix-result',
     'prefix-insufficient', 'prefix-sufficient', 'mode-selected', 'producer-start',
     'first-segment-published', 'segments-ready', 'target-available', 'target-wait',
     'player-open', 'native-new-frame', 'screen-frame-observed', 'download-complete',
@@ -37,6 +37,13 @@ def measurements(events):
         classification = 'B: producer started, no published segment recorded'
     else:
         classification = 'insufficient evidence or no initial wait'
+    confirmations=[e['elapsed'] for e in events if e['event']=='preview-confirmed' and e.get('preview') and 'elapsed' in e]
+    ordered=sorted(confirmations)
+    result['scrub'] = dict(confirmed_previews=len(ordered),
+        abandoned=sum(e['event']=='preview-abandoned' for e in events),
+        dispatch_to_confirmation_p50=ordered[len(ordered)//2] if ordered else None,
+        dispatch_to_confirmation_p95=ordered[min(len(ordered)-1,int(len(ordered)*.95))] if ordered else None,
+        evidence='Native fresh-counter confirmation, not an independent measurement of displayed pixels.')
     result['classification'] = classification
     result['terminal_errors'] = [e for e in events if e['event'] in ('error','native-failure','preparation-failed')]
     return result

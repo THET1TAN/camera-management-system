@@ -11,6 +11,7 @@ import threading
 import time
 
 from .model import Recording, PlaybackError
+from .cache import CacheManager, linked
 
 
 @dataclass(frozen=True)
@@ -25,10 +26,22 @@ class Entry:
         return (self.recording.start + self.media['duration']) if self.media else self.recording.end
 
 
-class Store:
-    def __init__(self, settings, cipher):
+class Store(CacheManager):
+    def __init__(self, settings, cipher, allow_sync=False, maintenance=True):
         self.settings, self.cipher = settings, cipher
         self.root = settings.cache_path
+        # Refuse linked ancestors before resolving them. Never treat the project,
+        # its credentials or an arbitrary drive root as a disposable cache.
+        if any(linked(p) for p in (self.root, *self.root.parents)) or self.root.parent == self.root:
+            raise PlaybackError('cache-path')
+        if any((self.root/name).exists() for name in ('camera_credentials.db', '.camera_encryption.key', 'playback.json')):
+            raise PlaybackError('cache-path')
+        if any(linked(self.root/name) for name in ('owner.lock','index.sqlite3','index.sqlite3-wal','index.sqlite3-shm')):
+            raise PlaybackError('cache-path')
+        if not allow_sync and any(p.name.lower().startswith('onedrive') for p in (self.root, *self.root.parents)):
+            raise PlaybackError('cache-path')
+        if self.root.exists() and not (self.root/'index.sqlite3').exists() and any(self.root.iterdir()):
+            raise PlaybackError('cache-directory-not-empty')
         self.root.mkdir(parents=True, exist_ok=True)
         self.root = self.root.resolve()
         self.lock = threading.RLock()
@@ -55,6 +68,7 @@ class Store:
             if version not in (0, 1):
                 raise PlaybackError('cache-version')
             self.db.execute('PRAGMA journal_mode=WAL')
+            self.db.execute('PRAGMA journal_size_limit=16777216')
             self.db.executescript('''
                 CREATE TABLE IF NOT EXISTS recordings (
                     key TEXT PRIMARY KEY, identity TEXT NOT NULL, camera INTEGER NOT NULL,
@@ -71,11 +85,13 @@ class Store:
             # entries survive restart and remain available without any camera.
             self.db.execute("UPDATE recordings SET state='failed' WHERE state IN ('partial','preparing')")
             self.db.commit()
+            self._cache_init(maintenance)
         except Exception:
             self.close()
             raise
 
     def close(self):
+        self._cache_close()
         with self.lock:
             if getattr(self, 'db', None) is not None:
                 self.db.close()
@@ -87,11 +103,16 @@ class Store:
         if not re.fullmatch('[0-9a-f]{64}', key):
             raise PlaybackError('cache-path')
         path = self.root/key
-        if path.is_symlink() or path.resolve().parent != self.root:
+        if linked(path) or path.resolve().parent != self.root:
             raise PlaybackError('cache-path')
         return path
 
     def record_search(self, camera, start, end, device, result):
+        # Stop growing metadata honestly rather than deleting availability to
+        # make a full index appear empty. Logs rotate independently.
+        index_bytes = sum(p.stat().st_size for p in (self.root/'index.sqlite3', self.root/'index.sqlite3-wal') if p.exists())
+        if index_bytes > 128*1024**2:
+            raise PlaybackError('index-capacity')
         with self.lock, self.db:
             self.db.execute('UPDATE recordings SET remote=0 WHERE camera=? AND device<>?', (camera, device))
             if result.complete:
@@ -127,16 +148,18 @@ class Store:
         if not camera_ids:
             return ()
         with self.lock:
-            rows = self.db.execute('SELECT sealed,state,media,remote FROM recordings WHERE camera IN ('+
+            rows = self.db.execute('SELECT sealed,state,media,remote,end FROM recordings WHERE camera IN ('+
                 ','.join('?' for _ in camera_ids)+') AND (remote=1 OR state IN (\'prepared\',\'downloaded\',\'preparing\')) '
                 'AND start<? AND (end>? OR (end IS NULL AND start>=?)) ORDER BY start LIMIT ?',
                 (*camera_ids, end, start, start-86400, self.settings.max_index_entries+1)).fetchall()
         if len(rows)>self.settings.max_index_entries:
             raise PlaybackError('index-view-limit')
         entries = []
-        for sealed, state, media, remote in rows:
+        for sealed, state, media, remote, known_end in rows:
             try:
                 r = Recording(**json.loads(self.cipher.decrypt(sealed)))
+                if r.end is None and known_end is not None:
+                    r = replace(r, end=known_end)
                 entries.append(Entry(r, state, json.loads(media) if media else None, bool(remote)))
             except Exception:
                 raise PlaybackError('cache-key') from None
@@ -144,10 +167,13 @@ class Store:
 
     def entry(self, key):
         with self.lock:
-            row = self.db.execute('SELECT sealed,state,media,remote FROM recordings WHERE key=?', (key,)).fetchone()
+            row = self.db.execute('SELECT sealed,state,media,remote,end FROM recordings WHERE key=?', (key,)).fetchone()
         if not row:
             raise PlaybackError('recording-unavailable')
-        return Entry(Recording(**json.loads(self.cipher.decrypt(row[0]))), row[1],
+        recording = Recording(**json.loads(self.cipher.decrypt(row[0])))
+        if recording.end is None and row[4] is not None:
+            recording = replace(recording, end=row[4])
+        return Entry(recording, row[1],
                      json.loads(row[2]) if row[2] else None, bool(row[3]))
 
     def state(self, key, state, media=None):
@@ -157,51 +183,3 @@ class Store:
             else:
                 self.db.execute('UPDATE recordings SET state=?,media=?,end=start+?,used=? WHERE key=?',
                     (state, json.dumps(media), media['duration'], time.time(), key))
-
-    def pin(self, key):
-        with self.lock:
-            self.pins.add(key)
-
-    def unpin(self, key):
-        with self.lock:
-            self.pins.discard(key)
-
-    def usage(self):
-        total = 0
-        for directory in self.root.iterdir():
-            if re.fullmatch('[0-9a-f]{64}', directory.name) and directory.is_dir() and not directory.is_symlink():
-                for path in directory.iterdir():
-                    if path.is_file() and not path.is_symlink():
-                        total += path.stat().st_size
-        return total
-
-    def ensure_space(self, reserve=0):
-        """Only inactive, owned cache directories are evicted; never exports."""
-        with self.lock:
-            quota = int(self.settings.cache_gib*1024**3)
-            free_floor = int(self.settings.free_gib*1024**3)
-            used = self.usage()
-            rows = self.db.execute('SELECT key,used FROM recordings ORDER BY used').fetchall()
-            for key, last_used in rows:
-                free = shutil.disk_usage(self.root).free
-                expired = time.time()-last_used > self.settings.ttl_days*86400
-                if not expired and used+reserve <= quota and free-reserve >= free_floor:
-                    break
-                if key in self.pins:
-                    continue
-                path = self.path(key)
-                if path.exists():
-                    # No recursive deletion: only regular files in a validated
-                    # direct child created by this cache are eligible.
-                    for child in path.iterdir():
-                        if child.is_symlink() or not child.is_file():
-                            raise PlaybackError('cache-path')
-                    for child in path.iterdir():
-                        size = child.stat().st_size
-                        child.unlink()
-                        used -= size
-                    path.rmdir()
-                self.db.execute("UPDATE recordings SET state='expired',media=NULL WHERE key=?", (key,))
-            self.db.commit()
-            if used+reserve > quota or shutil.disk_usage(self.root).free-reserve < free_floor:
-                raise PlaybackError('cache-full')

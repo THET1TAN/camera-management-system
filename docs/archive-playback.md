@@ -26,14 +26,13 @@ Unknown CGI durations remain point markers until inspection of actual media.
 Sound starts **muted**. The speaker button enables it. Pause, chosen speed
 (0.5/1/2/4), mute and volume belong to the archive controls and survive media
 replacement. There is no automatic reduction to 1× and no speed-dependent mute.
-An unsupported speed or unconfirmed seek is reported; a stale image is covered
-on a gap, buffering or failure. Native counter observations are not a guarantee
+An unsupported speed or unconfirmed seek is reported outside the image. A last
+known preview remains visible with its actual time distinct from the requested time. Native counter observations are not a guarantee
 of actual screen or loudspeaker output.
 
 The side panel contains calendar/camera filtering, details/exports and local
-settings. At compact width or low height it becomes a dismissible drawer in the
-same window. It may cover part of the video while open; the rendering HWND stays
-mapped underneath. Toolbar groups wrap. Video is never reparented/recreated by
+settings. At compact width or low height it uses a dismissible separate row
+below the timeline, outside the image. The rendering HWND stays mapped. Toolbar groups wrap. Video is never reparented/recreated by
 layout. The provisional minimum size is 520×460; Windows Snap/DPI ergonomics must
 be calibrated through the user tests below. Playback geometry is not persisted
 in the live-window position database.
@@ -95,9 +94,9 @@ HTTPS where the camera supports it. No raw request logs are retained.
 One background worker progressively indexes only the visible month. It caches
 successful queries for 15 minutes and incomplete/errors for 60 seconds; Refresh
 overrides this. Changes of month/filter cancel obsolete work. Playback can query
-the requested day independently, so at most two metadata operations may overlap;
-there is one media download pipeline globally (therefore no more than one per
-camera). There are no automatic historical scans, thumbnail downloads or NVR
+the requested day independently, with export discovery there are at most three metadata workers;
+playback has at most two preparation jobs and export has one serial source
+pipeline, with a writer lock preventing duplicate production for the same archive. There are no automatic historical scans, thumbnail downloads or NVR
 recording jobs. No ONVIF Profile G, Dahua or RTSP-to-cache bridge is claimed.
 
 ## Received bytes, preparation and playback
@@ -194,41 +193,33 @@ for cold-cache, slowed-transfer and visual qualification commands.
 
 ## Cache, export and shutdown
 
-Default cache: `%LOCALAPPDATA%\CameraManagementSystem\playback`, outside OneDrive.
-Default quota 8 GiB, free-space reserve 2 GiB, archive limit 2 GiB, inactive TTL
-14 days. `cache_directory` may point to another dedicated local folder. Do not
-store evidence in this evictable cache. All received originals, partial files,
-segments and producer temporaries are counted. Active writers/playlists are
-pinned. Cleanup deletes only inactive owned cache files; exports are outside
-that policy. An OS lock prevents two windows from mutating the same cache.
-The independent SQLite schema is version 1; unknown newer schemas are refused.
-No migration of the camera-credential database is performed.
+See the [consolidated implementation and qualification guide](archive-playback-consolidated.md)
+for the current selection/export and storage behavior. Store owns a shared 8 GiB
+media budget, 2 GiB free-space margin, 14-day inactivity retention and 90%/75%
+preventive thresholds. Settings are preserved and editable in Storage & Cache.
+Atomic reservations distinguish written bytes from remaining allocations;
+per-owner reference counts protect playback, playlists, HTTP readers, preparation
+and export. Maintenance belongs to application lifecycle, outside Tk. Unknown
+files and links/junctions are preserved, never followed during deletion.
 
-**Download original** preserves the exact received source bytes plus metadata/SHA-256,
-outside the evictable cache. It is an observed export, not proof of camera-side
-finalization or cryptographic authenticity. No silent overwrite is allowed.
-**A/B → Export selection** remuxes within the currently received native archive
-to MKV, copying video and adapting audio if required. Cross-archive range export
-and frame-exact re-encoding are not yet exposed. The remux preserves packet
-timestamps with an origin at the original archive start; ffprobe measures the
-actual first/last video packet bounds. The sidecar records requested and effective
-intervals, their mapping basis and precision warning. If bounds cannot be
-verified, the export fails explicitly instead of inventing them. This mapping
-still needs source/OSD qualification; packet timestamps are not independent
-evidence of camera-clock correctness.
+Manual cleanup previews scope and estimated space, then confirms and rechecks
+leases. Eviction removes cached state while preserving observed remote metadata.
+Download original saves a complete received original outside the cache; cache is
+not permanent backup. Incident holds are explicitly identified in local settings.
 
-Camera HTTP/DNS live in separate, killable owned processes. Private pipes carry
-commands/results; UI cancellation terminates only the corresponding camera job.
-Replies and index views are bounded (20,000 entries per view by default), with
-explicit errors rather than false complete coverage at the limit.
-Native operations stay in one disposable libVLC owner. A supervisor bounds
-operations and reaps it before replacement. EOF/pause/buffering are archive
-states, not live reconnection triggers. FFmpeg/ffprobe are hidden owned processes
-with Windows kill-on-owner-exit jobs. Closing Playback cancels only its jobs,
-server and player. Viewer waits for the archive HWND's owner to retire, while
-notifying live/PTZ children through their existing shutdown contract. Media is
-unpinned only after active local HTTP readers have drained. Local filesystem
-failure remains distinct from a bounded camera/network or native-operation timeout.
+Select range stores camera, track and UTC endpoints independently of playback.
+Export selection creates a separate Precise job across all intersecting archives,
+not just the current playback generation. Useful portions are decoded/re-encoded
+and assembled to one normalized MP4 with an audit sidecar. Confirmed gaps require
+an explicit neutral/available-only/cancel choice; unknown coverage cannot become
+a confirmed gap. Source frames limit precision, and OSD/audio still need visual
+qualification. Exports use bounded temporary workspaces and protect only each
+source stage. No keyframe-remux mode is exposed as Precise.
+
+Closing cancels producers and export, reaps owned processes, closes the player,
+clears published resources and releases each owner's protections. Outstanding
+HTTP readers retain their own leases until their handles close. No external
+process is killed. Source files, credentials and stable snapshots are preserved.
 
 Rotating `events.jsonl` in the cache records public event categories, counts,
 bytes, durations and sampled native counters. It contains no request URL, token,
@@ -265,13 +256,13 @@ camera and search. These results do not validate progressive start or scrubbing.
 **Current changes:** additional prefix/HLS/seek/UI regressions and an explicit
 slowed-transfer fixture with frame counter are prepared but not run. The
 [progressive trial guide](archive-playback-progressive.md) includes full commands,
-expected evidence and remaining limitations. The native 125 ms seek cadence is
-an implementation limit, not a measured preview frame rate. Physical container
+expected evidence and remaining limitations. Pointer targets are sampled at 125 ms; the native regulator admits one operation
+and one latest pending target. Neither value is a measured preview frame rate. Physical container
 compatibility, HLS growth, 0.5/1/2/4×, seek latency/OSD, dynamic joins, pauses,
 audio sync, responsive layout and DPI still need user qualification.
 
-Cross-archive range export remains an outstanding implementation item; ranges
-inside one received native archive are supported. The optional RTSP bridge
+Cross-archive Precise export is implemented but unqualified; the independent
+job includes ranges spanning more than four archives. The optional RTSP bridge
 and Profile G are not implemented. Keep the issue open and the PR in draft.
 
 See [the user-run test guide](archive-playback-testing.md).

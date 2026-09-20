@@ -1,5 +1,8 @@
 # PR #16 — jonction native et départ progressif
 
+> Historique de la révision précédente. Le [suivi consolidé](archive-playback-consolidated.md)
+> contient les observations actuelles, les nouvelles fonctionnalités et les 114 tests préparés (non exécutés).
+
 État : correctif candidat, non qualifié sur lecteur/caméra. Aucun test, lecteur,
 FFmpeg, son ou vidéo n'a été lancé par l'agent. Les commandes ci-dessous sont à
 exécuter au moment choisi par l'utilisateur, une caméra à la fois.

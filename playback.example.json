@@ -18,5 +18,8 @@
       "revision": "",
       "time_shift": 0
     }
-  }
+  },
+  "cleanup_high": 0.9,
+  "cleanup_low": 0.75,
+  "protected_archives": []
 }

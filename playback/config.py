@@ -3,6 +3,7 @@ from dataclasses import asdict, dataclass, field
 from contextlib import closing
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 from urllib.parse import urlsplit
@@ -28,10 +29,13 @@ class Settings:
     cameras: dict = field(default_factory=dict)
     # Use the user's local application data: video cache must not sync to OneDrive.
     cache_directory: str = ''
+    cleanup_high: float = .90
+    cleanup_low: float = .75
+    protected_archives: list = field(default_factory=list)
 
     @property
     def cache_path(self):
-        return Path(self.cache_directory).expanduser().resolve() if self.cache_directory else (
+        return Path(self.cache_directory).expanduser().absolute() if self.cache_directory else (
             Path(os.getenv('LOCALAPPDATA', str(Path.home()/'.cache'))) / 'CameraManagementSystem' / 'playback')
 
 
@@ -45,6 +49,10 @@ def load_settings(root=ROOT):
                 .05 <= settings.max_archive_gib <= settings.cache_gib and
                 1 <= settings.ttl_days <= 365 and 10 <= settings.reserve_seconds <= 600 and
                 30 <= settings.metadata_ttl <= 86400 and 1000 <= settings.max_index_entries <= 100000):
+            raise ValueError
+        if not 0 < settings.cleanup_low < settings.cleanup_high <= 1:
+            raise ValueError
+        if not isinstance(settings.protected_archives,list) or any(not isinstance(k,str) or not re.fullmatch('[0-9a-f]{64}',k) for k in settings.protected_archives):
             raise ValueError
         for key, values in settings.cameras.items():
             if not str(key).isdigit() or set(values) - {'backend', 'zone', 'endpoint', 'track', 'revision', 'time_shift'}:

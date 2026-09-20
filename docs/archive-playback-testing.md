@@ -1,5 +1,8 @@
 # Essais de Playback — à lancer par l’utilisateur
 
+> Historique de la révision précédente. Le [suivi consolidé](archive-playback-consolidated.md)
+> contient les observations actuelles, les nouvelles fonctionnalités et les 114 tests préparés (non exécutés).
+
 **Dernier correctif préparé :** [jonctions natives et départ progressif](archive-playback-boundaries.md).
 Cette procédure fournit les commandes Python 3.9, le banc à deux archives
 préchauffées et la comparaison A/B/C. Les 84 tests actuels restent à exécuter.

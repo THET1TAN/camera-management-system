@@ -317,6 +317,7 @@ class SeekTests(unittest.TestCase):
         ui.window = Mock()
         ui.window.after.return_value = 'pending'
         ui.controller = Mock()
+        ui.controller.active_request = None
         ui.camera_id, ui.initialized, ui.dragging, ui.closing = 3, True, True, False
         ui.seek_timer = None
         ui._draw_timeline = Mock()

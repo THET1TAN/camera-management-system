@@ -238,6 +238,7 @@ class EnvironmentAndConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             controller = Controller.__new__(Controller)
             controller.root = Path(directory)
+            controller.exporter = None
             controller.stop_event = threading.Event()
             controller.index_idle = threading.Event()
             controller.index_idle.set()

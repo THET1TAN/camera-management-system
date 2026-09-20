@@ -1,5 +1,8 @@
 # Lecture progressive, scrubbing et interface anglaise — PR #16
 
+> Historique de la révision précédente. Le [suivi consolidé](archive-playback-consolidated.md)
+> contient les observations actuelles, les nouvelles fonctionnalités et les 114 tests préparés (non exécutés).
+
 Suite au nouveau retour terrain, lire d'abord le
 [diagnostic de jonction et banc à deux archives](archive-playback-boundaries.md).
 Il ajoute les mesures C1/C2 conservées, les correctifs candidats et la procédure

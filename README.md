@@ -7,18 +7,19 @@ an integrated archive window, camera-badge calendar, timeline, ISAPI/VideoLink
 queries, local cache, progressive MPEG/HLS preparation, playback controls and
 original/range export. The stable **v0.2.10** sources remain in `~v0.2.10`.
 
-**The current progressive/scrubbing and native-boundary changes await user-run qualification.**
-The [native-boundary investigation and two-file bench](docs/archive-playback-boundaries.md)
-records existing C1/C2 evidence, candidate clock/frame-confirmation fixes and
-the A/B/C comparison commands. The 84 prepared Playback tests have not been run
-on this revision. Root sources remain synchronized with draft PR #16.
-The user passed all 44 earlier Playback tests under Python 3.9.13. C3/101 returns
-64 archives; C3/103 returns track 101 and is rejected as `track-mismatch`. Auto
-preserves the 64 usable archives as partial coverage. These are metadata results,
-not validation of progressive start, audio or scrubbing. Additional regressions
-and a slowed synthetic bench are prepared; the assistant has not launched tests,
-media, applications or camera requests. Cross-archive range export remains
-outstanding; this is not a release or a claim that issue #15 is complete.
+**The current development changes await user-run qualification.**
+The [consolidated guide](docs/archive-playback-consolidated.md) describes the
+latest C1 CGI boundary evidence, the visually fluid C2 control, regulated
+scrubbing, status outside the video, timeline range selection, independent
+multi-archive Precise export and Storage & Cache management.
+
+114 Playback tests are prepared, including 30 new cases; none were run on this
+revision by the assistant. The 44 earlier user-passed tests do not validate
+these changes. The CGI jump and actual preview cadence remain to be measured;
+no dedicated preview proxy or RTSP/cache bridge is claimed. Original incident
+media are explicitly protected locally. Root sources remain synchronized with
+draft PR #16; v0.2.10 remains preserved. This is not a release or a claim that
+issue #15 is complete.
 
 Use **Recordings** in Camera Viewer, or `Lancer-Enregistrements.cmd` for the
 standalone archive browser. Both Windows launchers default to the user's

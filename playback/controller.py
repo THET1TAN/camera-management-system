@@ -23,6 +23,7 @@ from .diagnostics import Diagnostics, safe_fields
 from .remote import RemoteBackend
 from .progressive import ProgressivePreparation
 from .preparation import PreparationJob
+from .exporting import Exporter, ExportRequest, destination_check
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,10 @@ class Controller:
         self.serial = 0
         self.export_request = None
         self.export_status = ''
+        self.exporter = None
+        self.original_thread = None
+        self.storage_request = None
+        self.cache_revision_seen = -1
         self.export_cancel = threading.Event()
         self.store = self.engine = self.server = None
         self.index_thread = None
@@ -79,6 +84,7 @@ class Controller:
         self.seek_serial = 0
         self.seek_target = None
         self.sent_seek = None
+        self.seek_inflight = None
         self.open_seek_token = None
         self.session_ranges = ()
         self.preview_position = 0.
@@ -136,6 +142,14 @@ class Controller:
                 if segment:
                     values.setdefault('archive_id', segment.archive_key[:12])
         if event == 'native-new-frame' and self.sent_seek and self.seek_target:
+            flight = getattr(self, 'seek_inflight', None)
+            if flight and values.get('seek_id') == flight[1] and values.get('generation') == flight[2]:
+                self.preview_position = values.get('absolute_position', self.preview_position)
+                self.log.event('preview-confirmed', camera_id=active[1], session_id=active[0],
+                               elapsed=time.monotonic()-flight[3], position=self.preview_position,
+                               seek_id=flight[1], preview=bool(self.seek_target and self.seek_target[3]),
+                               evidence='libvlc-counter-delta')
+                self.seek_inflight = None
             marker, native_id = self.sent_seek
             if (values.get('seek_id') == native_id and marker[0] == self.seek_target[0] and
                     marker[2] == values.get('generation') and not self.seek_target[3]):
@@ -162,6 +176,8 @@ class Controller:
         while not self.index_idle.wait(.05):
             check_cancel(self.stop_event)
         check_cancel(self.stop_event)
+        if self.exporter and self.exporter.thread:
+            self.exporter.thread.join()
         cameras, _ = load_cameras(settings, self.root)
         if cid not in {camera.camera_id for camera in cameras}:
             raise PlaybackError('camera-unavailable')
@@ -195,9 +211,21 @@ class Controller:
     def _seek_loop(self):
         while not self.stop_event.wait(.05):
             try:
+                if self.storage_request is not None:
+                    values, self.storage_request = self.storage_request, None
+                    settings = replace(self.settings, **values)
+                    if self.fixture_directory is None:
+                        save_settings(settings, self.root)
+                    self.settings = self.store.settings = settings
+                    self.store.cache_wake.set()
+                if self.store and self.month_request and self.cache_revision_seen != self.store.cache_revision:
+                    self.cache_revision_seen = self.store.cache_revision
+                    self._catalog(*self.month_request[:3])
                 self._service_seek()
             except PlaybackError as exc:
                 self.status = replace(self.status, reason=exc.code)
+            except OSError:
+                self.status = replace(self.status, reason='configuration-apply-failed')
 
     def _service_seek(self):
         with self.playback_lock:
@@ -223,9 +251,21 @@ class Controller:
             marker = (token, bool(available), self.engine.request[0])
             if self.sent_seek and self.sent_seek[0] == marker:
                 return
+            flight = getattr(self, 'seek_inflight', None)
+            if flight and flight[2] == self.engine.request[0]:
+                native = self.engine.snapshot
+                if native.confirmed_seek == flight[1]:
+                    self.preview_position = playlist.absolute_at(native.position)
+                    self.seek_inflight = None
+                elif preview and time.monotonic()-flight[3] < .85:
+                    return  # One in flight, one latest pending; never a FIFO.
+                else:
+                    self.log.event('preview-abandoned', camera_id=cid, seek_id=flight[1],
+                                   elapsed=time.monotonic()-flight[3], reason='newer-target')
             offset = playlist.media_offset(stamp) if available else None
             native_id = self.engine.seek(offset, preview=preview)
             self.sent_seek = (marker, native_id)
+            self.seek_inflight = (token, native_id, self.engine.request[0], time.monotonic()) if available else None
             self.log.event('seek-request', camera_id=cid, generation=self.engine.request[0], seek_id=native_id,
                            session_id=self.active_request[0],
                            position=stamp, preview=preview, requested_monotonic=requested_at,
@@ -238,6 +278,7 @@ class Controller:
 
     def stop(self):
         self.seek_target = self.sent_seek = None
+        self.seek_inflight = None
         self.request = None
         self.cancel.set()
         self.status = Status('STOPPED', self.status.camera_id, self.status.position)
@@ -254,6 +295,18 @@ class Controller:
         self.export_cancel = threading.Event()
         self.export_request = (key, Path(path), start, end)
         self.export_status = 'pending'
+        def original_job():
+            try:
+                with self.store.lease(key, 'export-original'):
+                    self._export(self.stop_event)
+            except PlaybackError as exc:
+                self.export_status = exc.code
+                self.export_request = None
+        self.original_thread = threading.Thread(target=original_job, name='Save original', daemon=True)
+        self.original_thread.start()
+
+    def export_selection(self, path, camera_id, track, start, end):
+        self.exporter.submit(ExportRequest(camera_id, track, start, end, Path(path)))
 
     def cancel_export(self):
         self.export_cancel.set()
@@ -435,6 +488,18 @@ class Controller:
         return found[0]
 
     def _prepare(self, entry, camera, playlist, cancel, backend_holder, requested, request, predecessor=None):
+        key = entry.recording.key
+        owner = 'prepare:'+str(request[0])+':'+key
+        with self.store.lease(key, owner), self.store.writer(key, cancel):
+            entry = self.store.entry(key)
+            raw = min(entry.recording.size or int(self.settings.max_archive_gib*1024**3),
+                      int(self.settings.max_archive_gib*1024**3))
+            amount = 0 if entry.state == 'prepared' else int(raw*2.5)+16*1024**2
+            with self.store.reserve(owner, key, amount) as allocation:
+                return self._prepare_owned(entry, camera, playlist, cancel, backend_holder,
+                                           requested, request, predecessor, allocation.check)
+
+    def _prepare_owned(self, entry, camera, playlist, cancel, backend_holder, requested, request, predecessor=None, budget=lambda:None):
         r = entry.recording
         with self.playback_lock:
             self.session_ranges = (*self.session_ranges, (r.start, entry.end))
@@ -452,11 +517,10 @@ class Controller:
             check_cancel(publish_cancel)
             self._publish_segments(playlist, r.key, segments, requested, request, final)
         directory = self.store.path(r.key)
-        self.store.pin(r.key)
         directory.mkdir(exist_ok=True)
         media = entry.media
-        source = directory/'original.bin'
-        if not source.exists() or entry.state not in ('downloaded', 'prepared', 'preparing'):
+        source = self.store.file(r.key,'original.bin')
+        if not source.exists():
             if backend_holder[0] is None:
                 backend_holder[0] = self.connect_backend(camera, cancel)
             backend = backend_holder[0]
@@ -470,9 +534,9 @@ class Controller:
                 raise PlaybackError('archive-too-large')
             # Reserve the full allowed raw transfer before handing the target to
             # a camera process; its progress reports cannot overshoot the quota.
-            self.store.ensure_space(limit)
+            budget()
             self.store.state(r.key, 'partial')
-            partial = directory/'original.part'
+            partial = self.store.file(r.key,'original.part')
             last_budget = [0]
             download_done, download_failed = threading.Event(), threading.Event()
             progressive = None
@@ -489,7 +553,7 @@ class Controller:
                     check_cancel(producer_cancel)
                     publish_ready(segments, final, producer_cancel)
                 prepare('pipe:0', directory, r, header, self.settings, producer_cancel, publish,
-                    lambda: self.store.ensure_space(4*1024*1024),
+                    budget,
                     growing_chunks(partial, download_done, download_failed, producer_cancel))
             def progress(received, expected, elapsed):
                 nonlocal progressive, first_byte
@@ -506,7 +570,7 @@ class Controller:
                         any(k == r.key for k, _ in playlist.groups)):
                     raise PlaybackError(progressive.error)
                 if received-last_budget[0] >= 4*1024*1024 or last_budget[0] == 0:
-                    self.store.ensure_space(4*1024*1024)
+                    budget()
                     last_budget[0] = received
                 self.status = replace(self.status, received=received, expected=expected or r.size)
                 if not playlist.url and not predecessor:
@@ -553,8 +617,9 @@ class Controller:
             raise PlaybackError('no-video-in-snapshot')
         self.status = replace(self.status, key=r.key, track=r.track,
             source='cache' if entry.state == 'prepared' else 'camera-snapshot')
-        segments, complete = read_segments(directory, r, timing=True,
+        segments, complete = (read_segments(directory, r, timing=True,
                                             video_offset=media.get('video_start_offset', 0.))
+                              if entry.state == 'prepared' else ((),False))
         if entry.state == 'prepared' and complete:
             publish_ready(segments, True)
             return r.start+media['duration']
@@ -568,7 +633,7 @@ class Controller:
             self.log.event('producer-start', camera_id=camera.camera_id, generation=request[0], session_id=request[0],
                            archive_id=r.key[:12], mode='complete', container=media['container'])
             media = prepare(source, directory, r, media, self.settings, cancel, publish,
-                            lambda: self.store.ensure_space(4*1024*1024))
+                            budget)
             self.store.state(r.key, 'prepared', media)
             if self.month_request:
                 self._catalog(*self.month_request[:3])
@@ -672,7 +737,7 @@ class Controller:
             if holder is not backend:
                 backends.append(holder)
             held.add(entry.recording.key)
-            self.store.pin(entry.recording.key)
+            self.store.pin(entry.recording.key, "session:"+str(request[0]))
             job = PreparationJob(entry, lambda: self._prepare(entry, camera, playlist, cancel, holder,
                 requested if not predecessor else entry.recording.start, request, predecessor), predecessor)
             jobs.append(job)
@@ -686,6 +751,7 @@ class Controller:
             previous_position = None
             previous_seek = None
             no_successor = False
+            deferred_boundary = None
             while not self.stop_event.wait(.1):
                 if self.request != request:
                     break
@@ -703,6 +769,8 @@ class Controller:
                                        origin='prefetch' if job.predecessor else 'initial')
                         if not job.predecessor:
                             raise job.error
+                        if reason in ('cache-full', 'cache-reservation-exceeded'):
+                            deferred_boundary = job.entry.recording.start
                         no_successor = True
                         self.status = replace(self.status, reason=reason)
                 if native.generation:
@@ -716,13 +784,14 @@ class Controller:
                     self.status = replace(self.status, state=native.state, position=position, prepared_end=playlist.end)
                     if time.monotonic()-logged_at>5:
                         logged_at=time.monotonic()
+                        for group_key, group_segments in playlist.groups:
+                            if group_segments and group_segments[0].start <= position <= group_segments[-1].start+group_segments[-1].duration:
+                                self.store.touch(group_key)
                         self.log.event('native-sample',camera_id=cid,generation=native.generation,state=native.state,
                             session_id=request[0], playlist_id=playlist.identifier,
                             position=position,relative_target=native.position,rate=native.rate,
                             paused=self.controls.paused,decoded=native.decoded,displayed=native.displayed,
                             stats_valid=native.stats_valid,audio=native.audio)
-                if self.export_request and all(j.done.is_set() for j in jobs):
-                    self._export(cancel)
                 # At most two transfers/remux jobs. The next native file can
                 # download while the first is still arriving; publication stays
                 # ordered. Initial reserve remains two viewing seconds.
@@ -775,6 +844,11 @@ class Controller:
                         self.status = replace(self.status, state='BUFFERING', position=position,
                                               reason='next-archive-pending')
                         continue
+                    if deferred_boundary is not None:
+                        # Retire this bounded playlist before allocating its next
+                        # archive. Optional prefetch never forces active eviction.
+                        self.select(cid, deferred_boundary)
+                        return
                     # A gap or quota boundary must not masquerade as a still live image.
                     self.status = replace(self.status, state='GAP', position=playlist.end,
                                           reason='session-limit' if len(held) >= 4 else 'end-of-coverage')
@@ -797,9 +871,9 @@ class Controller:
             self.session_ranges = ()
             self.sent_seek = None
             self.playlist_changing.clear()
-            if self.server.drained.wait(4):
-                for key in held:
-                    self.store.unpin(key)
+            self.server.drained.wait(4)
+            for key in held:
+                self.store.unpin(key, "session:"+str(request[0]))
             for holder in backends:
                 if holder[0]:
                     holder[0].close()
@@ -813,8 +887,9 @@ class Controller:
         try:
             if destination.exists() or sidecar.exists() or temporary.exists():
                 raise PlaybackError('export-exists')
+            destination_check(destination, self.store.root, 0, int(self.settings.free_gib*1024**3))
             entry = self.store.entry(key)
-            source = self.store.path(key)/'original.bin'
+            source = self.store.file(key,'original.bin')
             if not source.is_file():
                 raise PlaybackError('export-not-ready')
             metadata = {'camera_id': entry.recording.camera_id, 'backend': entry.recording.backend,
@@ -823,6 +898,7 @@ class Controller:
                 'finalization': 'unconfirmed', 'requested_interval': [start, end],
                 'mode': 'original' if start is None else 'keyframe-remux'}
             if start is None:
+                destination_check(destination, self.store.root, source.stat().st_size, int(self.settings.free_gib*1024**3))
                 digest = hashlib.sha256()
                 with source.open('rb') as inp, temporary.open('xb') as out:
                     owns_temporary = True
@@ -832,6 +908,7 @@ class Controller:
                         data = inp.read(1024*1024)
                         if not data:
                             break
+                        destination_check(destination, self.store.root, len(data), int(self.settings.free_gib*1024**3))
                         out.write(data)
                         digest.update(data)
                 metadata['sha256'] = digest.hexdigest()
@@ -898,14 +975,15 @@ class Controller:
             else:
                 self.settings = load_settings(self.root)
                 self.cameras, cipher = load_cameras(self.settings, self.root)
-            self.store = Store(self.settings, cipher)
+            self.store = Store(self.settings, cipher, allow_sync=self.fixture_directory is not None)
+            self.exporter = Exporter(self)
             self.log = Diagnostics(self.store.root)
             sources = sorted((Path(__file__).parent).glob('*.py'))
             digest = hashlib.sha256(b''.join(p.name.encode()+p.read_bytes() for p in sources)).hexdigest()
-            self.log.event('runtime-build', build='0.2.11-dev-boundaries-1', source_digest=digest,
+            self.log.event('runtime-build', build='0.2.11-dev-consolidated-1', source_digest=digest,
                            python=__import__('sys').version.split()[0])
             self.engine = Engine(self.hwnd, self._native_event)
-            self.server = SessionServer(self._native_event)
+            self.server = SessionServer(self._native_event, self.store)
             self.index_thread = threading.Thread(target=self._index, name='Archive metadata', daemon=True)
             self.index_thread.start()
             self.status = Status('IDLE')
@@ -924,13 +1002,6 @@ class Controller:
                         self.configuration_status = 'configuration-apply-failed'
                         self.settings_request = None
                 request = self.request
-                if self.export_request and (request is None or request == previous):
-                    key = self.export_request[0]
-                    self.store.pin(key)
-                    try:
-                        self._export(self.stop_event)
-                    finally:
-                        self.store.unpin(key)
                 if request is None or request == previous:
                     continue
                 previous = request
@@ -966,6 +1037,10 @@ class Controller:
                 self.server.close()
             if self.index_thread:
                 self.index_thread.join(timeout=8)
+            if self.exporter:
+                self.exporter.close()
+            if self.original_thread:
+                self.original_thread.join()
             if self.store:
                 # Camera DNS/HTTP live in killable owned processes. Keep this
                 # guard for a metadata worker stuck in local filesystem I/O.

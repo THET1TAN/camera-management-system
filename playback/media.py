@@ -1,5 +1,6 @@
 """Local media inspection and incremental HLS preparation, without video re-encoding."""
 from dataclasses import dataclass
+from fractions import Fraction
 import json
 import math
 from pathlib import Path
@@ -51,7 +52,8 @@ def media_info(data, warnings=0, complete=True):
         start = float(data['format'].get('start_time', video.get('start_time', 0)))
         video_start = float(video.get('start_time', start))
         width, height = int(video.get('width', 0)), int(video.get('height', 0))
-        if (not math.isfinite(start+video_start) or not 0 < width <= 16384 or not 0 < height <= 16384 or
+        sar = Fraction(video.get('sample_aspect_ratio', '1:1').replace(':','/')) if video.get('sample_aspect_ratio') not in (None,'N/A','0:1') else Fraction(1)
+        if (not math.isfinite(start+video_start) or not 0 < width <= 16384 or not 0 < height <= 16384 or not 0 < width*sar <= 16384 or
                 (complete and (not math.isfinite(duration) or not 0 < duration < 7*86400))):
             raise ValueError
         if video.get('codec_name') not in ('h264', 'hevc'):
@@ -59,9 +61,11 @@ def media_info(data, warnings=0, complete=True):
         return {'duration': duration, 'container': data['format']['format_name'],
             'video': video['codec_name'], 'audio': audio.get('codec_name', '') if audio else '',
             'width': width, 'height': height, 'source_start': start,
+            'frame_rate': video.get('avg_frame_rate', '0/0'),
+            'display_width': round(width*sar),
             'video_start_offset': video_start-start, 'warnings': bool(warnings),
             'finalization': 'unconfirmed'}
-    except (KeyError, ValueError, TypeError, StopIteration):
+    except (KeyError, ValueError, TypeError, StopIteration, ZeroDivisionError):
         raise PlaybackError('media-invalid' if complete else 'prefix-insufficient') from None
 
 
@@ -110,7 +114,7 @@ class Segment:
 
 def probe(path, settings, cancel):
     output, warnings = run([settings.ffprobe, '-v', 'warning', '-protocol_whitelist', 'file,pipe',
-        '-show_entries', 'format=format_name,start_time,duration,size:stream=codec_type,codec_name,start_time,width,height,sample_rate,channels',
+        '-show_entries', 'format=format_name,start_time,duration,size:stream=codec_type,codec_name,start_time,width,height,sample_rate,channels,avg_frame_rate,sample_aspect_ratio',
         '-of', 'json', str(path)], cancel, timeout=45)
     try:
         return media_info(json.loads(output), warnings)
@@ -211,10 +215,10 @@ def growing_chunks(path, finished, failed, cancel):
                 cancel.wait(.05)
 
 
-def packet_bounds(path, settings, cancel):
+def packet_bounds(path, settings, cancel, stream='v:0'):
     """Measure preserved video packet timestamps; do not infer a keyframe cut."""
     output, _ = run([settings.ffprobe, '-v', 'error', '-protocol_whitelist', 'file,pipe',
-        '-select_streams', 'v:0', '-show_packets', '-show_entries',
+        '-select_streams', stream, '-show_packets', '-show_entries',
         'packet=pts_time,duration_time:packet_side_data=', '-of', 'csv=p=0', str(path)],
         cancel, timeout=120, limit=16*1024*1024)
     first, last = math.inf, -math.inf

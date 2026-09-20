@@ -5,11 +5,13 @@ import math
 from pathlib import Path
 import re
 import secrets
+import socket
 from socketserver import ThreadingMixIn
 import threading
 from urllib.parse import urlsplit
 
 from .model import PlaybackError
+from .cache import linked
 from .timestamps import TransportResource, CLOCK
 
 
@@ -40,12 +42,14 @@ class BoundedServer(ThreadingMixIn, HTTPServer):
 
 
 class SessionServer:
-    def __init__(self, event=None):
+    def __init__(self, event=None, store=None):
         self.event = event or (lambda *_args, **_kwargs: None)
+        self.store = store
         self.token = secrets.token_urlsafe(32)
         self.lock = threading.Lock()
         self.resources = {}
         self.active_readers = 0
+        self.reader_connections = set()
         self.drained = threading.Event()
         self.drained.set()
         owner = self
@@ -71,10 +75,21 @@ class SessionServer:
                     return
                 name = parts.path[len(owner.token)+2:]
                 self.resource_name = name
+                lease = None
                 with owner.lock:
                     resource = owner.resources.get(name)
+                    if resource is not None and owner.store and not isinstance(resource[0], bytes):
+                        data = resource[0]
+                        path = data.path if isinstance(data, TransportResource) else data
+                        candidate = owner.store.lease(path.parent.name, 'http:'+str(id(self)))
+                        try:
+                            candidate.__enter__()
+                            lease = candidate
+                        except PlaybackError:
+                            resource = None
                     if resource is not None:
                         owner.active_readers += 1
+                        owner.reader_connections.add(self.connection)
                         owner.drained.clear()
                 if resource is None:
                     self.send_error(404)
@@ -88,7 +103,7 @@ class SessionServer:
                     else:
                         # All resources were registered explicitly by a producer.
                         path = data.path if isinstance(data, TransportResource) else data
-                        self.resource_exists = path.is_file() and not path.is_symlink()
+                        self.resource_exists = path.is_file() and not linked(path)
                         if not self.resource_exists:
                             self.send_error(404)
                             return
@@ -136,8 +151,11 @@ class SessionServer:
                 finally:
                     if handle:
                         handle.close()
+                    if lease:
+                        lease.__exit__(None, None, None)
                     with owner.lock:
                         owner.active_readers -= 1
+                        owner.reader_connections.discard(self.connection)
                         if owner.active_readers == 0:
                             owner.drained.set()
             def send_response(self, code, message=None):
@@ -163,7 +181,15 @@ class SessionServer:
 
     def close(self):
         self.http.shutdown()
+        with self.lock:
+            connections = tuple(self.reader_connections)
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
         self.http.server_close()
+        self.drained.wait(4)
         self.thread.join(timeout=2)
         self.clear()
 
