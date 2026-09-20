@@ -7,6 +7,7 @@ import re
 
 from .model import PlaybackError, check_cancel
 from .processes import run
+from .timestamps import segment_pts, WRAP, CLOCK
 
 PREFIX_STEPS = (256*1024, 1024*1024, 4*1024*1024, 16*1024*1024, 64*1024*1024)
 
@@ -104,6 +105,7 @@ class Segment:
     duration: float
     archive_key: str
     discontinuity: bool = False
+    first_pts: float = None
 
 
 def probe(path, settings, cancel):
@@ -116,7 +118,7 @@ def probe(path, settings, cancel):
         raise PlaybackError('media-invalid') from None
 
 
-def read_segments(directory, recording):
+def read_segments(directory, recording, timing=False, video_offset=0.):
     playlist = directory/'source.m3u8'
     if not playlist.exists():
         return (), False
@@ -126,7 +128,7 @@ def read_segments(directory, recording):
         return (), False  # Windows can momentarily hold a renamed playlist.
     if not lines or lines[0] != '#EXTM3U' or len(lines) > 200000:
         raise PlaybackError('playlist-invalid')
-    duration, elapsed, result = None, 0., []
+    duration, elapsed, result, origin = None, 0., [], None
     for line in lines:
         if line.startswith('#EXTINF:'):
             try:
@@ -141,7 +143,16 @@ def read_segments(directory, recording):
             path = directory/line
             if path.is_symlink() or path.resolve().parent != directory.resolve() or not path.is_file():
                 raise PlaybackError('playlist-invalid')
-            result.append(Segment(path, recording.start+elapsed, duration, recording.key))
+            first = segment_pts(path) if timing else None
+            if first is not None:
+                if origin is None:
+                    origin = first
+                delta = first-origin
+                delta += round((elapsed-delta)/(WRAP/CLOCK))*(WRAP/CLOCK)
+                start = recording.start+video_offset+delta
+            else:
+                start = recording.start+elapsed
+            result.append(Segment(path, start, duration, recording.key, first_pts=first))
             elapsed += duration
             duration = None
     return tuple(result), '#EXT-X-ENDLIST' in lines
@@ -167,14 +178,16 @@ def prepare(source, directory, recording, media, settings, cancel, publish, budg
     previous = [0]
     def tick():
         budget()
-        segments, complete = read_segments(directory, recording)
+        segments, complete = read_segments(directory, recording, timing=True,
+                                            video_offset=media.get('video_start_offset', 0.))
         if len(segments) != previous[0]:
             previous[0] = len(segments)
             publish(segments, False)
     _, warnings = run(hls_command(source, directory, media, settings), cancel, timeout=1800, tick=tick,
                       input_chunks=input_chunks)
     check_cancel(cancel)
-    segments, complete = read_segments(directory, recording)
+    segments, complete = read_segments(directory, recording, timing=True,
+                                        video_offset=media.get('video_start_offset', 0.))
     if not segments or not complete:
         raise PlaybackError('preparation-incomplete')
     publish(segments, True)

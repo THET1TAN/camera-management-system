@@ -7,7 +7,11 @@ an integrated archive window, camera-badge calendar, timeline, ISAPI/VideoLink
 queries, local cache, progressive MPEG/HLS preparation, playback controls and
 original/range export. The stable **v0.2.10** sources remain in `~v0.2.10`.
 
-**The current progressive/scrubbing changes await user-run qualification.**
+**The current progressive/scrubbing and native-boundary changes await user-run qualification.**
+The [native-boundary investigation and two-file bench](docs/archive-playback-boundaries.md)
+records existing C1/C2 evidence, candidate clock/frame-confirmation fixes and
+the A/B/C comparison commands. The 84 prepared Playback tests have not been run
+on this revision. Root sources remain synchronized with draft PR #16.
 The user passed all 44 earlier Playback tests under Python 3.9.13. C3/101 returns
 64 archives; C3/103 returns track 101 and is rejected as `track-mismatch`. Auto
 preserves the 64 usable archives as partial coverage. These are metadata results,

@@ -1,5 +1,10 @@
 # Lecture progressive, scrubbing et interface anglaise — PR #16
 
+Suite au nouveau retour terrain, lire d'abord le
+[diagnostic de jonction et banc à deux archives](archive-playback-boundaries.md).
+Il ajoute les mesures C1/C2 conservées, les correctifs candidats et la procédure
+A/B/C. Le générateur crée désormais deux fichiers natifs par caméra synthétique.
+
 ## État des preuves
 
 Le retour utilisateur sur `4366478` valide **44 tests en 0,547 s**, avec Python

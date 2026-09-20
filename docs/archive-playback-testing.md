@@ -1,5 +1,9 @@
 # Essais de Playback — à lancer par l’utilisateur
 
+**Dernier correctif préparé :** [jonctions natives et départ progressif](archive-playback-boundaries.md).
+Cette procédure fournit les commandes Python 3.9, le banc à deux archives
+préchauffées et la comparaison A/B/C. Les 84 tests actuels restent à exécuter.
+
 **Dernier essai utilisateur au commit `4366478` : 44 tests sur 44 réussis,
 en 0,547 s, sous Python 3.9.13.** La connexion temporaire SQLite est corrigée.
 La comparaison réelle C3, journée du 18 septembre 2026, confirme 64 archives

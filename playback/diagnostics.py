@@ -12,7 +12,11 @@ FIELDS = {'camera_id', 'generation', 'elapsed', 'received', 'count', 'complete',
           'xml_root', 'xml_namespace', 'application_code', 'application_subcode', 'application_status', 'requested_track',
           'returned_track', 'page_position', 'announced_count', 'track_enabled', 'outcome',
           'python_executable_matches_parent', 'container', 'mode', 'seek_id',
-          'target_duration', 'segment_duration', 'reserve', 'preview', 'evidence', 'session_id', 'requested_monotonic'}
+          'target_duration', 'segment_duration', 'reserve', 'preview', 'evidence', 'session_id', 'requested_monotonic',
+          'archive_id', 'previous_archive_id', 'playlist_id', 'resource_id', 'segment_exists', 'origin',
+          'target', 'relative_target', 'absolute_position', 'prepared_start', 'prepared_end',
+          'boundary', 'boundary_delta', 'first_pts', 'last_pts', 'baseline_decoded', 'baseline_displayed',
+          'baseline_valid', 'stats_valid', 'paused', 'landed', 'build', 'run_id', 'source_digest', 'classification', 'audio'}
 
 ENDPOINTS = {'/ISAPI/System/deviceInfo', '/ISAPI/ContentMgmt/record/tracks',
              '/ISAPI/ContentMgmt/search', '/ISAPI/ContentMgmt/download',
@@ -36,6 +40,10 @@ def safe_fields(values):
             value = value[:200].replace('\r', '').replace('\n', '')
             if key == 'endpoint' and value not in ENDPOINTS:
                 value = '/playback/<recording>' if value.startswith('/playback/') else '<unrecognized>'
+            if key in ('archive_id', 'previous_archive_id', 'playlist_id', 'run_id', 'source_digest') and not re.fullmatch(r'[0-9a-f]{8,64}', value):
+                value = '<unrecognized>'
+            if key == 'resource_id' and not re.fullmatch(r'(?:[0-9a-f]{24}\.m3u8|[0-9a-f]{64}-segment-\d{5,8}\.ts)', value):
+                value = '<unrecognized>'
             if key in ('requested_track', 'returned_track') and not re.fullmatch(r'\d{1,10}', value):
                 value = '<unrecognized>'
             if key == 'xml_root' and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,79}', value):
@@ -103,6 +111,8 @@ class ProtocolTrace:
 
 class Diagnostics:
     def __init__(self, directory):
+        import secrets
+        self.run_id = secrets.token_hex(8)
         self.logger = logging.Logger('archive-playback')
         self.handler = RotatingFileHandler(directory/'events.jsonl',maxBytes=512*1024,backupCount=2,encoding='utf-8')
         self.logger.addHandler(self.handler)
@@ -110,7 +120,7 @@ class Diagnostics:
 
     def event(self, event, **values):
         safe = safe_fields(values)
-        self.logger.info(json.dumps(dict(event=event,monotonic=time.monotonic(),**safe),ensure_ascii=False))
+        self.logger.info(json.dumps(dict(event=event,monotonic=time.monotonic(),run_id=self.run_id,**safe),ensure_ascii=False))
 
     def close(self):
         self.handler.close()

@@ -22,6 +22,7 @@ from .store import Store
 from .diagnostics import Diagnostics, safe_fields
 from .remote import RemoteBackend
 from .progressive import ProgressivePreparation
+from .preparation import PreparationJob
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,8 @@ class Controller:
         self.playlist_changing = threading.Event()
         self.playback_lock = threading.RLock()
         self.seek_thread = None
+        self.resume_target = None
+        self.open_origin = 'initial-open'
         self.thread = threading.Thread(target=self._run, name='Archive coordinator', daemon=True)
         self.thread.start()
 
@@ -116,6 +119,28 @@ class Controller:
             return False
         if 'generation' in values and (not self.engine.request or self.engine.request[0] != values['generation']):
             return False
+        playlist = self.active_playlist
+        if playlist:
+            values.setdefault('playlist_id', playlist.identifier)
+            resource = values.get('resource_id', '')
+            if '-segment-' in resource:
+                values.setdefault('archive_id', resource.split('-segment-', 1)[0][:12])
+            elif resource.endswith('.m3u8'):
+                values['playlist_id'] = resource[:-5]
+            if 'target' in values:
+                values.setdefault('relative_target', values['target'])
+            if 'position' in values:
+                stamp = values['position'] if event == 'screen-frame-observed' else playlist.absolute_at(values['position'])
+                values.setdefault('absolute_position', stamp)
+                segment = next((s for s in playlist.segments if s.start <= stamp < s.start+s.duration), None)
+                if segment:
+                    values.setdefault('archive_id', segment.archive_key[:12])
+        if event == 'native-new-frame' and self.sent_seek and self.seek_target:
+            marker, native_id = self.sent_seek
+            if (values.get('seek_id') == native_id and marker[0] == self.seek_target[0] and
+                    marker[2] == values.get('generation') and not self.seek_target[3]):
+                # Acknowledgment must not depend on whether Tk has polled view.
+                self.seek_target = None
         self.log.event(event, camera_id=active[1], session_id=active[0], **values)
         return True
 
@@ -198,11 +223,14 @@ class Controller:
             marker = (token, bool(available), self.engine.request[0])
             if self.sent_seek and self.sent_seek[0] == marker:
                 return
-            native_id = self.engine.seek(playlist.media_offset(stamp) if available else None, preview=preview)
+            offset = playlist.media_offset(stamp) if available else None
+            native_id = self.engine.seek(offset, preview=preview)
             self.sent_seek = (marker, native_id)
             self.log.event('seek-request', camera_id=cid, generation=self.engine.request[0], seek_id=native_id,
                            session_id=self.active_request[0],
                            position=stamp, preview=preview, requested_monotonic=requested_at,
+                           relative_target=offset if offset is not None else -1., origin='user',
+                           playlist_id=playlist.identifier,
                            reason='' if available else 'target-not-received')
             if available:
                 self.log.event('target-available', camera_id=cid, session_id=self.active_request[0],
@@ -250,6 +278,8 @@ class Controller:
             native = self.engine.snapshot
             if native.state == 'FAILED':
                 return replace(status, state='FAILED', reason=native.reason)
+            if native.state == 'ENDED' and not playlist.closed:
+                return replace(status, state='BUFFERING', reason='next-archive-pending')
             if native.generation and native.state not in ('IDLE', 'FAILED'):
                 position = playlist.absolute_at(native.position)
                 target = self.seek_target
@@ -404,9 +434,23 @@ class Controller:
             raise PlaybackError('no-video' if result.complete else 'coverage-unknown')
         return found[0]
 
-    def _prepare(self, entry, camera, playlist, cancel, backend_holder, requested, request):
+    def _prepare(self, entry, camera, playlist, cancel, backend_holder, requested, request, predecessor=None):
         r = entry.recording
-        self.session_ranges = (*self.session_ranges, (r.start, entry.end))
+        with self.playback_lock:
+            self.session_ranges = (*self.session_ranges, (r.start, entry.end))
+        self.log.event('archive-prepare', camera_id=camera.camera_id, session_id=request[0],
+                       archive_id=r.key[:12], position=r.start, prepared_end=entry.end or 0.,
+                       origin='prefetch' if predecessor else 'initial', state=entry.state)
+        def publish_ready(segments, final, publish_cancel=cancel):
+            # Transfer and remux can overlap, but a later group may not change
+            # offsets while its predecessor is still appending segments.
+            if predecessor:
+                while not predecessor.done.wait(.05):
+                    check_cancel(publish_cancel)
+                if predecessor.error:
+                    raise Cancelled()
+            check_cancel(publish_cancel)
+            self._publish_segments(playlist, r.key, segments, requested, request, final)
         directory = self.store.path(r.key)
         self.store.pin(r.key)
         directory.mkdir(exist_ok=True)
@@ -416,6 +460,9 @@ class Controller:
             if backend_holder[0] is None:
                 backend_holder[0] = self.connect_backend(camera, cancel)
             backend = backend_holder[0]
+            if isinstance(backend, RemoteBackend):
+                backend.diagnostic = lambda detail: self._diagnostic(dict(detail,
+                    archive_id=r.key[:12], session_id=request[0]))
             if backend.device != r.device:
                 raise PlaybackError('device-changed')
             limit = int(self.settings.max_archive_gib*1024**3)
@@ -431,15 +478,16 @@ class Controller:
             progressive = None
             first_byte = False
             def emit(event, **values):
-                self.log.event(event, camera_id=camera.camera_id, generation=request[0], backend=r.backend, **values)
+                self.log.event(event, camera_id=camera.camera_id, generation=request[0], session_id=request[0],
+                               archive_id=r.key[:12], backend=r.backend, **values)
                 if event == 'mode-selected' and values.get('mode') == 'complete':
                     self.status = replace(self.status, reason=values['reason'])
-                elif event == 'producer-failed':
+                elif event == 'producer-failed' and not predecessor:
                     self.status = replace(self.status, state='FAILED', reason=values['reason'])
             def produce(header, producer_cancel):
                 def publish(segments, final):
                     check_cancel(producer_cancel)
-                    self._publish_segments(playlist, r.key, segments, requested, request, final)
+                    publish_ready(segments, final, producer_cancel)
                 prepare('pipe:0', directory, r, header, self.settings, producer_cancel, publish,
                     lambda: self.store.ensure_space(4*1024*1024),
                     growing_chunks(partial, download_done, download_failed, producer_cancel))
@@ -461,7 +509,7 @@ class Controller:
                     self.store.ensure_space(4*1024*1024)
                     last_budget[0] = received
                 self.status = replace(self.status, received=received, expected=expected or r.size)
-                if not playlist.url:
+                if not playlist.url and not predecessor:
                     self.status = Status('DOWNLOADING', camera.camera_id, requested, reason=self.status.reason,
                         received=received, expected=expected or r.size, key=r.key, track=r.track)
                 if received and progressive is None:
@@ -498,24 +546,27 @@ class Controller:
                     progressive.join()
         if media is None:
             media = probe(source, self.settings, cancel)
-        self.session_ranges = tuple((a, r.start+media['duration'] if a == r.start else b)
-                                    for a, b in self.session_ranges)
+        with self.playback_lock:
+            self.session_ranges = tuple((a, r.start+media['duration'] if a == r.start else b)
+                                        for a, b in self.session_ranges)
         if not r.start <= requested < r.start+media['duration']:
             raise PlaybackError('no-video-in-snapshot')
         self.status = replace(self.status, key=r.key, track=r.track,
             source='cache' if entry.state == 'prepared' else 'camera-snapshot')
-        segments, complete = read_segments(directory, r)
+        segments, complete = read_segments(directory, r, timing=True,
+                                            video_offset=media.get('video_start_offset', 0.))
         if entry.state == 'prepared' and complete:
-            self._publish_segments(playlist, r.key, segments, requested, request, True)
+            publish_ready(segments, True)
             return r.start+media['duration']
         self.store.state(r.key, 'preparing', media)
         if not playlist.url:
             self.status = replace(self.status, state='PREPARING')
         def publish(segments, final):
             check_cancel(cancel)
-            self._publish_segments(playlist, r.key, segments, requested, request, final)
+            publish_ready(segments, final)
         try:
-            self.log.event('producer-start', camera_id=camera.camera_id, generation=request[0], mode='complete', container=media['container'])
+            self.log.event('producer-start', camera_id=camera.camera_id, generation=request[0], session_id=request[0],
+                           archive_id=r.key[:12], mode='complete', container=media['container'])
             media = prepare(source, directory, r, media, self.settings, cancel, publish,
                             lambda: self.store.ensure_space(4*1024*1024))
             self.store.state(r.key, 'prepared', media)
@@ -527,12 +578,21 @@ class Controller:
         return r.start+media['duration']
 
     def _publish_segments(self, playlist, key, segments, requested, request, final):
+        with self.playback_lock:
+            self._publish_locked(playlist, key, segments, requested, request, final)
+
+    def _publish_locked(self, playlist, key, segments, requested, request, final):
+        if self.request != request:
+            raise Cancelled()
         if not segments:
             return
         longest = max(s.duration for s in segments)
         self.log.event('segments-ready', camera_id=self.status.camera_id, generation=request[0],
-                       count=len(segments), segment_duration=longest, complete=final)
-        first_publication = not playlist.url
+                       session_id=request[0], archive_id=key[:12], playlist_id=playlist.identifier,
+                       count=len(segments), segment_duration=longest, complete=final,
+                       prepared_start=segments[0].start, prepared_end=segments[-1].start+segments[-1].duration,
+                       first_pts=segments[0].first_pts if segments[0].first_pts is not None else -1.)
+        first_publication = not any(k == key for k, _ in playlist.groups)
         if playlist.url and longest > playlist.target_duration:
             self.playlist_changing.set()
             resume = self.view.position if self.engine.request is not None else requested
@@ -542,17 +602,26 @@ class Controller:
                     check_cancel(self.cancel)
                 self.server.clear()
                 playlist.rebase(resume, longest)
+                self.resume_target, self.open_origin = resume, 'gop-rebase'
                 requested = resume
                 self.sent_seek = None
                 self.status = replace(self.status, state='BUFFERING')
                 self.log.event('long-gop-rebase', camera_id=self.status.camera_id, generation=request[0],
+                               session_id=request[0], archive_id=key[:12], playlist_id=playlist.identifier,
                                position=resume, target_duration=playlist.target_duration, segment_duration=longest)
             finally:
                 self.playlist_changing.clear()
         with self.playback_lock:
+            if playlist.groups and all(k != key for k, _ in playlist.groups):
+                self.log.event('archive-boundary', camera_id=request[1], session_id=request[0],
+                    archive_id=key[:12], previous_archive_id=playlist.groups[-1][0][:12],
+                    playlist_id=playlist.identifier, boundary=segments[0].start,
+                    boundary_delta=segments[0].start-playlist.end,
+                    relative_target=segments[0].start-playlist.start)
             playlist.update(key, segments)
             if first_publication:
                 self.log.event('first-segment-published', camera_id=self.status.camera_id, generation=request[0],
+                               session_id=request[0], archive_id=key[:12], playlist_id=playlist.identifier,
                                segment_duration=segments[0].duration, target_duration=playlist.target_duration)
             self._maybe_open(playlist, requested, request, final=final)
 
@@ -563,6 +632,7 @@ class Controller:
     def _open_ready(self, playlist, requested, request, final):
         if self.request != request:
             raise Cancelled()
+        requested = getattr(self, 'resume_target', None) or playlist.requested
         target = self.seek_target
         if target and target[1] == request[1]:
             requested = target[2]
@@ -570,12 +640,17 @@ class Controller:
         # Two viewing seconds to start; comfort prefetch remains independently 120s.
         reserve = max(2., 2*self.controls.rate)
         available = any(s.start <= requested < s.start+s.duration for s in playlist.segments)
+        if not available and playlist.segments and getattr(self, '_waiting_target', None) != requested:
+            self._waiting_target = requested
+            self.log.event('target-wait', camera_id=request[1], session_id=request[0], target=requested,
+                           prepared_end=playlist.end, reason='target-not-received', classification='E')
         if self.engine.request is None and playlist.url and available and (
                 final or playlist.end-requested >= reserve):
             self.engine.controls = self.controls
             self.log.event('target-available', camera_id=request[1], generation=request[0], position=requested,
                            reserve=playlist.end-requested)
-            self.engine.open(playlist.url, playlist.media_offset(requested))
+            self.engine.open(playlist.url, playlist.media_offset(requested), origin=getattr(self, 'open_origin', 'initial-open'))
+            self.resume_target = None
             self.status = replace(self.status, state='STARTING', position=requested)
 
     def _session(self, request):
@@ -588,67 +663,117 @@ class Controller:
         playlist = Playlist(self.server, requested)
         self.session_ranges = ()
         self.sent_seek = None
+        self.resume_target, self.open_origin = None, 'initial-open'
         self.active_playlist, self.active_request = playlist, request
         held = set()
+        jobs, backends = [], [backend]
+        def launch(entry, predecessor=None):
+            holder = backend if not jobs else [None]
+            if holder is not backend:
+                backends.append(holder)
+            held.add(entry.recording.key)
+            self.store.pin(entry.recording.key)
+            job = PreparationJob(entry, lambda: self._prepare(entry, camera, playlist, cancel, holder,
+                requested if not predecessor else entry.recording.start, request, predecessor), predecessor)
+            jobs.append(job)
+            job.start()
         try:
             entry = self._find(camera, requested, cancel, backend)
-            held.add(entry.recording.key)
-            self._prepare(entry, camera, playlist, cancel, backend, requested, request)
-            boundary_checked = False
+            launch(entry)
             logged_at = 0.
+            recovery = None
+            next_check = 0.
+            previous_position = None
+            previous_seek = None
+            no_successor = False
             while not self.stop_event.wait(.1):
                 if self.request != request:
                     break
                 native = self.engine.snapshot
-                self._maybe_open(playlist, requested, request, final=True)
+                self._maybe_open(playlist, requested, request, final=all(j.done.is_set() for j in jobs))
                 position = playlist.absolute_at(native.position) if native.generation else requested
                 if native.state == 'FAILED':
                     raise PlaybackError(native.reason)
+                for job in jobs:
+                    if job.done.is_set() and job.error and not job.reported:
+                        job.reported = True
+                        reason = job.error.code if isinstance(job.error, PlaybackError) else 'preparation-incomplete'
+                        self.log.event('preparation-failed', camera_id=cid, session_id=request[0],
+                                       archive_id=job.entry.recording.key[:12], reason=reason,
+                                       origin='prefetch' if job.predecessor else 'initial')
+                        if not job.predecessor:
+                            raise job.error
+                        no_successor = True
+                        self.status = replace(self.status, reason=reason)
                 if native.generation:
+                    seek_marker = self.engine.seek_request['id'] if self.engine.seek_request else None
+                    if (previous_position is not None and seek_marker == previous_seek and
+                            position < previous_position-2 and native.state == 'PLAYING'):
+                        self.log.event('native-clock-regression', camera_id=cid, session_id=request[0],
+                                       generation=native.generation, position=position,
+                                       boundary=previous_position, playlist_id=playlist.identifier)
+                    previous_position, previous_seek = position, seek_marker
                     self.status = replace(self.status, state=native.state, position=position, prepared_end=playlist.end)
                     if time.monotonic()-logged_at>5:
                         logged_at=time.monotonic()
                         self.log.event('native-sample',camera_id=cid,generation=native.generation,state=native.state,
-                            position=position,rate=native.rate,decoded=native.decoded,displayed=native.displayed)
-                if self.export_request:
+                            session_id=request[0], playlist_id=playlist.identifier,
+                            position=position,relative_target=native.position,rate=native.rate,
+                            paused=self.controls.paused,decoded=native.decoded,displayed=native.displayed,
+                            stats_valid=native.stats_valid,audio=native.audio)
+                if self.export_request and all(j.done.is_set() for j in jobs):
                     self._export(cancel)
-                # A reserve is measured in viewing seconds; the chosen speed never changes.
-                reserve = self.settings.reserve_seconds*self.controls.rate
-                if not boundary_checked and playlist.end-position <= reserve:
-                    boundary_checked = True
-                    candidates = self.store.entries((cid,), playlist.end-1, playlist.end+86400)
+                # At most two transfers/remux jobs. The next native file can
+                # download while the first is still arriving; publication stays
+                # ordered. Initial reserve remains two viewing seconds.
+                tail = jobs[-1]
+                tail_entry = self.store.entry(tail.entry.recording.key) if tail.done.is_set() else tail.entry
+                boundary = tail_entry.end
+                horizon = max(self.settings.reserve_seconds, 180)*self.controls.rate
+                if (time.monotonic() >= next_check and not no_successor and len(held) < 4 and
+                        sum(not j.done.is_set() for j in jobs) < 2):
+                    next_check = time.monotonic()+1.
+                    candidates = self.store.entries((cid,), tail.entry.recording.start, tail.entry.recording.start+86400)
                     next_entries = sorted((e for e in candidates if e.recording.key not in held and
                         e.recording.device == entry.recording.device and e.recording.track == entry.recording.track and
-                        abs(e.recording.start-playlist.end) <= .5), key=lambda e: e.recording.start)
-                    if not next_entries and len(held) < 4:
+                        e.recording.start > tail.entry.recording.start and
+                        (boundary is None or abs(e.recording.start-boundary) <= .5)), key=lambda e: e.recording.start)
+                    near = (next_entries[0].recording.start if next_entries else boundary)
+                    if not next_entries and tail.done.is_set() and boundary is not None and boundary-position <= horizon:
                         try:
-                            discovered = self._find(camera, playlist.end, cancel, backend, exclude=held)
+                            discovered = self._find(camera, boundary, cancel, backend, exclude=held)
                             if (discovered.recording.track == entry.recording.track and
-                                    abs(discovered.recording.start-playlist.end) <= .5):
+                                    abs(discovered.recording.start-boundary) <= .5):
                                 next_entries = [discovered]
                         except Cancelled:
                             raise
-                        except PlaybackError:
+                        except PlaybackError as exc:
                             # Remaining local media stays playable during a camera
                             # outage. Never replace it with an unrelated later time.
-                            pass
-                    if next_entries and len(held) < 4:
-                        next_entry = next_entries[0]
-                        held.add(next_entry.recording.key)
-                        try:
-                            self._prepare(next_entry, camera, playlist, cancel, backend,
-                                          next_entry.recording.start, request)
-                            boundary_checked = False
-                        except Cancelled:
-                            raise
-                        except PlaybackError as exc:
-                            self.status = replace(self.status, reason=exc.code)
-                            playlist.finish()
-                    else:
-                        playlist.finish()
+                            self.log.event('successor-unavailable', camera_id=cid, session_id=request[0], reason=exc.code)
+                        if not next_entries:
+                            no_successor = True
+                    if next_entries and (near is None or near-max(position, requested) <= horizon):
+                        self.log.event('prefetch-start', camera_id=cid, session_id=request[0],
+                            archive_id=next_entries[0].recording.key[:12], boundary=next_entries[0].recording.start,
+                            reserve=horizon)
+                        launch(next_entries[0], tail)
+                if (no_successor or len(held) >= 4) and all(j.done.is_set() for j in jobs) and not playlist.closed:
+                    playlist.finish()
                 if native.state == 'ENDED':
-                    if not playlist.closed and playlist.end-position > .5:
-                        self.engine.open(playlist.url, playlist.media_offset(position))
+                    # Temporary native EOF is not end of archive coverage. Wait
+                    # until new local segments exist, then reopen once for that
+                    # (generation, available-end) pair. No repeated seek storm.
+                    marker = (round(position, 1), playlist.end)
+                    if playlist.end-position > .5 and recovery != marker:
+                        recovery = marker
+                        with self.playback_lock:
+                            self.engine.open(playlist.url, playlist.media_offset(position), origin='ended-recovery')
+                            self.sent_seek = None
+                        continue
+                    if not playlist.closed or any(not j.done.is_set() for j in jobs):
+                        self.status = replace(self.status, state='BUFFERING', position=position,
+                                              reason='next-archive-pending')
                         continue
                     # A gap or quota boundary must not masquerade as a still live image.
                     self.status = replace(self.status, state='GAP', position=playlist.end,
@@ -659,6 +784,10 @@ class Controller:
                         self.select(cid, playlist.end)
                     return
         finally:
+            cancel.set()
+            # Reap all publishers before retiring their resources or pins.
+            for job in jobs:
+                job.join()
             self.playlist_changing.set()
             self.engine.stop()
             while not self.engine.idle.wait(.05):
@@ -671,8 +800,9 @@ class Controller:
             if self.server.drained.wait(4):
                 for key in held:
                     self.store.unpin(key)
-            if backend[0]:
-                backend[0].close()
+            for holder in backends:
+                if holder[0]:
+                    holder[0].close()
 
     def _export(self, cancel):
         key, destination, start, end = self.export_request
@@ -770,8 +900,12 @@ class Controller:
                 self.cameras, cipher = load_cameras(self.settings, self.root)
             self.store = Store(self.settings, cipher)
             self.log = Diagnostics(self.store.root)
+            sources = sorted((Path(__file__).parent).glob('*.py'))
+            digest = hashlib.sha256(b''.join(p.name.encode()+p.read_bytes() for p in sources)).hexdigest()
+            self.log.event('runtime-build', build='0.2.11-dev-boundaries-1', source_digest=digest,
+                           python=__import__('sys').version.split()[0])
             self.engine = Engine(self.hwnd, self._native_event)
-            self.server = SessionServer()
+            self.server = SessionServer(self._native_event)
             self.index_thread = threading.Thread(target=self._index, name='Archive metadata', daemon=True)
             self.index_thread.start()
             self.status = Status('IDLE')
@@ -805,11 +939,13 @@ class Controller:
                 except Cancelled:
                     pass
                 except PlaybackError as exc:
-                    self.log.event('error',camera_id=request[1],reason=exc.code)
+                    self.log.event('error',camera_id=request[1],session_id=request[0],reason=exc.code,
+                                   archive_id=self.status.key[:12], position=self.status.position)
                     if self.request == request:
                         state = 'CONFIGURATION' if exc.code == 'timezone-required' else 'GAP' if exc.code.startswith('no-video') else 'ERROR'
                         self.status = replace(self.status, state=state, reason=exc.code)
                 except Exception:
+                    self.log.event('error',camera_id=request[1],session_id=request[0],reason='playback-unavailable')
                     if self.request == request:
                         self.status = replace(self.status, state='ERROR', reason='playback-unavailable')
         except PlaybackError as exc:

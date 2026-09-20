@@ -9,14 +9,31 @@ from urllib.parse import urlsplit
 
 class FrameGate:
     """Counters are native evidence, not an observation of pixels on screen."""
-    def __init__(self, target, baseline):
+    def __init__(self, target, baseline, started=None, rate=1., baseline_valid=True):
         self.target, self.baseline = target, baseline
+        self.started = time.monotonic() if started is None else started
+        self.rate, self.baseline_valid = rate, bool(baseline_valid)
+        self.landed = False
+        self.previous = None
 
-    def accepts(self, position, video):
-        if any(a < b for a, b in zip(video, self.baseline)):
-            self.baseline = video  # Some native inputs reset statistics on seek.
+    def accepts(self, position, video, now=None, valid=True):
+        now = time.monotonic() if now is None else now
+        elapsed = max(0., now-self.started)
+        near = abs(position-self.target) <= 1.
+        self.landed = self.landed or near
+        plausible = self.target-1. <= position <= self.target+elapsed*self.rate+1.
+        moving = self.previous is not None and 0 < position-self.previous <= self.rate*elapsed+1.
+        self.previous = position
+        if not valid:
             return False
-        return abs(position-self.target) <= 1.0 and all(a > b for a, b in zip(video, self.baseline))
+        if not self.baseline_valid or any(a < b for a, b in zip(video, self.baseline)):
+            self.baseline = video  # Some native inputs reset statistics on seek.
+            self.baseline_valid = True
+            return False
+        # A moving target may have passed the one-second landing window by the
+        # time VLC updates its statistics. Require both fresh counters AND an
+        # observed landing or a subsequent plausible, advancing media clock.
+        return plausible and (self.landed or moving) and all(a > b for a, b in zip(video, self.baseline))
 
 
 class Commands:
@@ -95,6 +112,7 @@ def run(config, commands):
         sought = False
         previous_video = (0, 0)
         last_progress = time.monotonic()
+        last_evidence = 0.
         while not commands.stop.wait(.1):
             state = call('state', player.get_state)
             if state == vlc.State.Error:
@@ -102,12 +120,13 @@ def run(config, commands):
                 return
             if state == vlc.State.Ended:
                 emit(kind='sample', state='ENDED', position=call('time', player.get_time)/1000,
-                     rate=call('rate', player.get_rate), decoded=0, displayed=0)
+                     rate=call('rate', player.get_rate), decoded=previous_video[0], displayed=previous_video[1],
+                     stats_valid=False)
                 return
             ready = state in (vlc.State.Playing, vlc.State.Paused)
             controls = dict(commands.controls)
             command = commands.seek
-            if command and command['id'] != seek_id:
+            if command and command.get('generation', generation) == generation and command['id'] != seek_id:
                 seek_id = command['id']
                 preview = bool(command.get('preview'))
                 holding = command['offset'] is None
@@ -132,7 +151,11 @@ def run(config, commands):
                 baseline = vlc.MediaStats()
                 valid_baseline = call('stats', media.get_stats, baseline)
                 gate = FrameGate(seeking, (baseline.decoded_video, baseline.displayed_pictures)
-                                 if valid_baseline else previous_video)
+                                 if valid_baseline else previous_video, rate=float(controls['rate']),
+                                 baseline_valid=valid_baseline)
+                emit(kind='evidence', event='native-seek-issued', seek_id=seek_id,
+                     target=seeking, baseline_decoded=gate.baseline[0], baseline_displayed=gate.baseline[1],
+                     baseline_valid=bool(valid_baseline), origin=(command or {}).get('origin', config.get('origin', 'initial-open')))
                 call('pause', player.set_pause, 0)
                 call('seek', player.set_time, int(seeking*1000))
                 sought = True
@@ -140,17 +163,32 @@ def run(config, commands):
             stats = vlc.MediaStats()
             valid = call('stats', media.get_stats, stats)
             video = (stats.decoded_video, stats.displayed_pictures) if valid else previous_video
+            if valid and any(a < b for a, b in zip(video, previous_video)):
+                previous_video = video
+                last_progress = time.monotonic()
             if all(a > b for a, b in zip(video, previous_video)):
                 previous_video = video
                 last_progress = time.monotonic()
             if seeking is not None:
-                if ready and gate is not None and valid and gate.accepts(position, video):
+                accepted_frame = ready and gate is not None and gate.accepts(position, video, valid=bool(valid))
+                if time.monotonic()-last_evidence >= .5:
+                    last_evidence = time.monotonic()
+                    emit(kind='evidence', event='native-seek-evidence', seek_id=seek_id, target=seeking,
+                         position=position, decoded=video[0], displayed=video[1], stats_valid=bool(valid),
+                         baseline_decoded=gate.baseline[0] if gate else 0,
+                         baseline_displayed=gate.baseline[1] if gate else 0,
+                         baseline_valid=bool(gate and gate.baseline_valid),
+                         elapsed=last_evidence-gate.started if gate else 0., state=str(state),
+                         rate=float(controls['rate']), paused=bool(controls['paused']), preview=preview,
+                         landed=bool(gate and gate.landed))
+                if accepted_frame:
                     seeking = None
                     confirmed_seek, frame_confirmed = seek_id, True
                     call('pause', player.set_pause, int(controls['paused'] or preview))
                     applied = None  # Restore user's mute state only after the new frame.
                 elif time.monotonic() > seek_deadline:
-                    emit(kind='failure', reason='seek-unavailable')
+                    emit(kind='failure', reason='seek-unavailable', seek_id=seek_id, position=position,
+                         target=seeking, decoded=video[0], displayed=video[1], stats_valid=bool(valid))
                     return
             rate = call('rate', player.get_rate)
             if ready and abs(rate-float(controls['rate'])) > .01:
@@ -160,7 +198,7 @@ def run(config, commands):
                      'BUFFERING' if not ready or time.monotonic()-last_progress > 2 else 'PLAYING')
             emit(kind='sample', state=label, position=position, rate=rate,
                  decoded=video[0], displayed=video[1], audio=stats.played_abuffers if valid else 0,
-                 confirmed_seek=confirmed_seek, frame_confirmed=frame_confirmed)
+                 confirmed_seek=confirmed_seek, frame_confirmed=frame_confirmed, stats_valid=bool(valid))
     except Exception:
         emit(kind='failure', reason='native-unavailable')
     finally:

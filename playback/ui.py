@@ -389,7 +389,7 @@ class PlaybackWindow:
             if status.expected:
                 text += TEXT['expected_mib'].format(size=status.expected/1048576)
         elif status.source == 'cache':
-            text += TEXT['cached_suffix']
+            text += TEXT['current_cached_suffix']
         elif status.expected and status.received < status.expected:
             text += TEXT['background_download'].format(received=status.received/1048576, expected=status.expected/1048576)
         if status.reason:

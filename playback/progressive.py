@@ -44,7 +44,11 @@ class ProgressivePreparation:
                     self.cancel.wait(.1)
                 check_cancel(self.cancel)
                 self.emit('prefix-analysis', received=size)
+                began = time.monotonic()
                 result = probe_prefix(self.path, self.settings, self.cancel, size)
+                self.emit('prefix-result', received=size, elapsed=time.monotonic()-began,
+                          outcome='sufficient' if result.media else 'retry' if result.retry else 'fallback',
+                          reason=result.reason, container=result.media['container'] if result.media else '')
                 if result.media:
                     self.emit('prefix-sufficient', received=size, container=result.media['container'])
                     self.emit('mode-selected', mode='progressive', container=result.media['container'])

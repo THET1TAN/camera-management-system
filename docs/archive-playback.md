@@ -130,7 +130,8 @@ still requires user testing.
 The media pipeline copies H.264/HEVC video. AAC is copied; other detected audio is
 converted to AAC for HLS. No audio track is allowed. FFmpeg prepares nominal
 four-second MPEG-TS segments and atomically publishes finalized segment/playlist
-files. The application reads actual EXTINF durations, not `segment number × 4`.
+files. The application reads actual EXTINF durations and first video packet PTS
+for absolute segment starts; gaps are not replaced with cumulative EXTINF time.
 No `independent_segments` claim or artificial `-readrate` throttle is added.
 
 libVLC loads a generated playlist over a private HTTP loopback port. The server
@@ -138,10 +139,14 @@ has an opaque session URL, explicit resource allowlist, no directory listing,
 no redirects, no external roots, six concurrent clients, read timeouts, MIME and
 no-store headers. Nothing is served to the LAN. An EVENT generation keeps all
 referenced files pinned; one native file ending does not immediately end the
-session. The next archive is prepared when the reserve falls below 120 seconds
-of viewing time (480 seconds of archive at 4×).
+session. At most two preparation jobs overlap. The next archive can start
+downloading within a horizon of at least 180 viewing seconds while the current
+file is still arriving. Publication waits for the preceding producer to finish.
 
-Successive groups use explicit discontinuities. Real segment time maps to
+Successive groups use explicit discontinuities. Loopback responses translate
+PTS/DTS/PCR/OPCR by a constant per archive into a common media clock, leaving
+cached files intact and preserving packet spacing and A/V offsets. Byte ranges
+receive the same transformed bytes as complete responses. Real segment time maps to
 archive time per group, retaining offsets instead of compressing gaps. A join
 currently allows at most 0.5 seconds of boundary difference due to timestamp
 precision; larger gaps/overlaps stop the chain and require explicit navigation.
@@ -173,8 +178,9 @@ bridge and camera Range support are not implemented.
 Preview temporarily mutes and freezes the native player after a confirmed frame;
 it never changes the selected rate, volume or saved pause/mute state. Release
 issues a final target and restores those controls after new decoded/displayed
-counters and a position within one second. Positive cumulative counters from an
-older seek are insufficient. This is native evidence, not frame-exact positioning
+counters plus an observed landing or successive advancing positions compatible
+with elapsed time and rate. Invalid/reset statistics require a fresh baseline;
+unchanged counters or an implausible position are insufficient. This is native evidence, not frame-exact positioning
 or proof of pixels on screen. Requested and last confirmed preview times are
 shown separately; local seeks keep the stable surface with a small status strip.
 
@@ -182,7 +188,8 @@ English UI text, months, weekday labels, tooltips, errors and CLI help live in
 `playback/presentation.py`. Dates remain YYYY-MM-DD with explicit time zones;
 America/Toronto and DST rules are unchanged. F8 records an explicit user report
 of a visible new frame, including reaction delay. It is distinct from native
-counter events. See the [progressive and scrubbing trial](archive-playback-progressive.md)
+counter events. See the [native-boundary evidence and two-file trial](archive-playback-boundaries.md)
+and [progressive and scrubbing trial](archive-playback-progressive.md)
 for cold-cache, slowed-transfer and visual qualification commands.
 
 ## Cache, export and shutdown

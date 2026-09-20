@@ -10,6 +10,7 @@ import threading
 from urllib.parse import urlsplit
 
 from .model import PlaybackError
+from .timestamps import TransportResource, CLOCK
 
 
 class BoundedServer(ThreadingMixIn, HTTPServer):
@@ -39,7 +40,8 @@ class BoundedServer(ThreadingMixIn, HTTPServer):
 
 
 class SessionServer:
-    def __init__(self):
+    def __init__(self, event=None):
+        self.event = event or (lambda *_args, **_kwargs: None)
         self.token = secrets.token_urlsafe(32)
         self.lock = threading.Lock()
         self.resources = {}
@@ -59,6 +61,8 @@ class SessionServer:
             def do_GET(self):
                 self.serve(True)
             def serve(self, send_body):
+                self.resource_name = ''
+                self.resource_exists = False
                 parts = urlsplit(self.path)
                 expected_host = f'127.0.0.1:{owner.port}'
                 if (parts.query or parts.fragment or self.headers.get('Host') != expected_host or
@@ -66,6 +70,7 @@ class SessionServer:
                     self.send_error(404)
                     return
                 name = parts.path[len(owner.token)+2:]
+                self.resource_name = name
                 with owner.lock:
                     resource = owner.resources.get(name)
                     if resource is not None:
@@ -75,17 +80,20 @@ class SessionServer:
                     self.send_error(404)
                     return
                 data, mime = resource
+                self.resource_exists = True
                 handle = None
                 try:
                     if isinstance(data, bytes):
                         size = len(data)
                     else:
                         # All resources were registered explicitly by a producer.
-                        if data.is_symlink() or not data.is_file():
+                        path = data.path if isinstance(data, TransportResource) else data
+                        self.resource_exists = path.is_file() and not path.is_symlink()
+                        if not self.resource_exists:
                             self.send_error(404)
                             return
-                        handle = data.open('rb')
-                        size = data.stat().st_size
+                        handle = path.open('rb')
+                        size = path.stat().st_size
                     start, end = 0, size-1
                     ranged = self.headers.get('Range')
                     if ranged:
@@ -108,7 +116,10 @@ class SessionServer:
                         self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
                     self.end_headers()
                     if send_body:
-                        if handle:
+                        if isinstance(data, TransportResource):
+                            for chunk in data.chunks(handle, start, end):
+                                self.wfile.write(chunk)
+                        elif handle:
                             handle.seek(start)
                             remaining = end-start+1
                             while remaining:
@@ -119,8 +130,9 @@ class SessionServer:
                                 remaining -= len(chunk)
                         else:
                             self.wfile.write(data[start:end+1])
-                except (OSError, ValueError):
-                    pass
+                except (OSError, ValueError, PlaybackError):
+                    owner.event('loopback-transfer-failed', resource_id=self.resource_name,
+                                reason='local-response-interrupted')
                 finally:
                     if handle:
                         handle.close()
@@ -128,6 +140,11 @@ class SessionServer:
                         owner.active_readers -= 1
                         if owner.active_readers == 0:
                             owner.drained.set()
+            def send_response(self, code, message=None):
+                owner.event('loopback-response', resource_id=getattr(self, 'resource_name', ''),
+                            http_status=code, method=self.command,
+                            segment_exists=getattr(self, 'resource_exists', False))
+                super().send_response(code, message)
         self.http = BoundedServer(Handler)
         self.port = self.http.server_port
         self.thread = threading.Thread(target=self.http.serve_forever, kwargs={'poll_interval': .1}, daemon=True)
@@ -174,20 +191,12 @@ class Playlist:
         return self.segments[-1].start+self.segments[-1].duration if self.segments else self.requested
 
     def absolute_at(self, media_seconds):
-        elapsed = 0.
-        segments = self.segments
-        for segment in segments:
-            if media_seconds < elapsed+segment.duration:
-                return segment.start+max(0., media_seconds-elapsed)
-            elapsed += segment.duration
-        return self.end if segments else self.requested
+        return min(self.end, self.start+max(0., media_seconds))
 
     def media_offset(self, stamp):
-        elapsed = 0.
         for segment in self.segments:
             if segment.start <= stamp < segment.start+segment.duration:
-                return elapsed+stamp-segment.start
-            elapsed += segment.duration
+                return stamp-self.start
         raise PlaybackError('no-video')
 
     def update(self, key, segments):
@@ -221,7 +230,11 @@ class Playlist:
                 lines.append('#EXT-X-DISCONTINUITY')
             for s in group:
                 name = f'{s.archive_key}-{s.path.name}'
-                self.server.publish(name, s.path, 'video/mp2t')
+                # Anchor each archive to the same media clock. Preserve actual
+                # packet spacing/overlaps; never replace a gap with EXTINF sums.
+                data = s.path if s.first_pts is None else TransportResource(s.path,
+                    round((10.+s.start-self.start-s.first_pts)*CLOCK))
+                self.server.publish(name, data, 'video/mp2t')
                 lines.extend(('#EXT-X-PROGRAM-DATE-TIME:'+datetime.fromtimestamp(s.start, timezone.utc).isoformat(),
                               f'#EXTINF:{s.duration:.6f},', name))
         if self.closed:

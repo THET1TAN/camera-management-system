@@ -277,8 +277,10 @@ class MediaAndServingTests(unittest.TestCase):
         playlist=Playlist(Mock(),100)
         playlist.update('a',(Segment(Path('segment-00000.ts'),100,4.,'a'),))
         playlist.update('b',(Segment(Path('segment-00001.ts'),104.25,4.,'b'),))
-        self.assertAlmostEqual(playlist.absolute_at(5),105.25)
-        self.assertAlmostEqual(playlist.media_offset(105.25),5)
+        self.assertAlmostEqual(playlist.absolute_at(5),105.)
+        self.assertAlmostEqual(playlist.media_offset(105.25),5.25)
+        with self.assertRaisesRegex(PlaybackError, 'no-video'):
+            playlist.media_offset(104.1)
 
     def test_loopback_allowlist_range_and_no_directory_access(self):
         server=SessionServer()
