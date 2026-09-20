@@ -48,3 +48,11 @@ Thumbs.db
 # Local release preparation and backup files
 .release-work/
 *.back
+
+# Private archive settings, indexes, cache and exports
+playback.json
+playback.json.tmp
+playback-cache/
+playback-exports/
+playback-fixtures*/
+*.partial

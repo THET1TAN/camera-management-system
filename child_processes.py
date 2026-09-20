@@ -48,6 +48,9 @@ class ChildProcesses:
         self.processes = []
         self.closing = False
         self._deadline = None
+        # Optional in-process windows that own supervised native resources.
+        # Their HWNDs must outlive those resources, just like process children.
+        self.close_guards = []
 
     @staticmethod
     def _close_pipe(process):
@@ -112,7 +115,7 @@ class ChildProcesses:
 
     def _finish_close(self):
         self._reap()
-        if not self.processes:
+        if not self.processes and all(guard() for guard in self.close_guards):
             self.root.destroy()
             return
         if self.clock() >= self._deadline:

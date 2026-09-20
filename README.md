@@ -1,5 +1,37 @@
 # Camera Management System
 
+## Development: v0.2.11-dev — microSD archive playback
+
+Root sources now contain the **unqualified development implementation for issue #15**:
+an integrated archive window, camera-badge calendar, timeline, ISAPI/VideoLink
+queries, local cache, progressive MPEG/HLS preparation, playback controls and
+original/range export. The stable **v0.2.10** sources remain in `~v0.2.10`.
+
+**The current development changes await user-run qualification.**
+The [consolidated guide](docs/archive-playback-consolidated.md) describes the
+latest C1 CGI boundary evidence, the visually fluid C2 control, regulated
+scrubbing, status outside the video, timeline range selection, independent
+multi-archive Precise export and Storage & Cache management.
+
+114 Playback tests are prepared, including 30 new cases; none were run on this
+revision by the assistant. The 44 earlier user-passed tests do not validate
+these changes. The CGI jump and actual preview cadence remain to be measured;
+no dedicated preview proxy or RTSP/cache bridge is claimed. Original incident
+media are explicitly protected locally. Root sources remain synchronized with
+draft PR #16; v0.2.10 remains preserved. This is not a release or a claim that
+issue #15 is complete.
+
+Use **Recordings** in Camera Viewer, or `Lancer-Enregistrements.cmd` for the
+standalone archive browser. Both Windows launchers default to the user's
+`%LOCALAPPDATA%\Programs\Python\Python39\python.exe`; set `CAMERA_PYTHON` to
+override that explicit path. They do not inject temporary test dependencies.
+Opening its calendar does not start a video. Add the
+new `tzdata` dependency using the same Python interpreter as the application.
+See [behavior, design and limits](docs/archive-playback.md) and
+[commands and test sequence](docs/archive-playback-testing.md).
+See the [progressive start, scrubbing and English UI trial](docs/archive-playback-progressive.md)
+and [environment and one-camera diagnostics](docs/archive-playback-diagnostics.md).
+
 ## Current release: v0.2.10 — remembered window layout
 
 Released September 18, 2026, with the changes from
@@ -23,8 +55,8 @@ and maximized/minimized states are not saved. Layout data stays locally in
 `camera_window_positions.db`, separate from camera credentials and excluded from
 Git. See the [window layout guide](docs/window-positions.md) for behavior and limits.
 
-Root sources and [`~v0.2.10`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.10)
-contain this version. See the [v0.2.10 release notes](note_de_version-v0.2.10.txt).
+[`~v0.2.10`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.10)
+preserves this stable version. See the [v0.2.10 release notes](note_de_version-v0.2.10.txt).
 Previous snapshots remain unchanged. No rebuilt executable is included.
 
 ## Previous release: v0.2.9 — nonblocking RTSP recovery

@@ -1,0 +1,1042 @@
+{
+  "arrow-clockwise/normal/20": [
+    0,
+    0,
+    20
+  ],
+  "arrow-counterclockwise/normal/20": [
+    44,
+    0,
+    20
+  ],
+  "arrow-repeat/normal/20": [
+    88,
+    0,
+    20
+  ],
+  "calendar3/normal/20": [
+    132,
+    0,
+    20
+  ],
+  "camera-video/normal/20": [
+    176,
+    0,
+    20
+  ],
+  "check2/normal/20": [
+    220,
+    0,
+    20
+  ],
+  "chevron-left/normal/20": [
+    264,
+    0,
+    20
+  ],
+  "chevron-right/normal/20": [
+    308,
+    0,
+    20
+  ],
+  "clock/normal/20": [
+    352,
+    0,
+    20
+  ],
+  "download/normal/20": [
+    396,
+    0,
+    20
+  ],
+  "exclamation-triangle/normal/20": [
+    440,
+    0,
+    20
+  ],
+  "film/normal/20": [
+    484,
+    0,
+    20
+  ],
+  "funnel/normal/20": [
+    528,
+    0,
+    20
+  ],
+  "info-circle/normal/20": [
+    572,
+    0,
+    20
+  ],
+  "layout-sidebar/normal/20": [
+    616,
+    0,
+    20
+  ],
+  "pause-fill/normal/20": [
+    660,
+    0,
+    20
+  ],
+  "play-fill/normal/20": [
+    704,
+    0,
+    20
+  ],
+  "scissors/normal/20": [
+    748,
+    0,
+    20
+  ],
+  "skip-forward-fill/normal/20": [
+    792,
+    0,
+    20
+  ],
+  "sliders/normal/20": [
+    836,
+    0,
+    20
+  ],
+  "stop-fill/normal/20": [
+    880,
+    0,
+    20
+  ],
+  "volume-mute/normal/20": [
+    924,
+    0,
+    20
+  ],
+  "volume-up/normal/20": [
+    968,
+    0,
+    20
+  ],
+  "x-lg/normal/20": [
+    1012,
+    0,
+    20
+  ],
+  "zoom-in/normal/20": [
+    1056,
+    0,
+    20
+  ],
+  "zoom-out/normal/20": [
+    1100,
+    0,
+    20
+  ],
+  "arrow-clockwise/normal/25": [
+    0,
+    24,
+    25
+  ],
+  "arrow-counterclockwise/normal/25": [
+    44,
+    24,
+    25
+  ],
+  "arrow-repeat/normal/25": [
+    88,
+    24,
+    25
+  ],
+  "calendar3/normal/25": [
+    132,
+    24,
+    25
+  ],
+  "camera-video/normal/25": [
+    176,
+    24,
+    25
+  ],
+  "check2/normal/25": [
+    220,
+    24,
+    25
+  ],
+  "chevron-left/normal/25": [
+    264,
+    24,
+    25
+  ],
+  "chevron-right/normal/25": [
+    308,
+    24,
+    25
+  ],
+  "clock/normal/25": [
+    352,
+    24,
+    25
+  ],
+  "download/normal/25": [
+    396,
+    24,
+    25
+  ],
+  "exclamation-triangle/normal/25": [
+    440,
+    24,
+    25
+  ],
+  "film/normal/25": [
+    484,
+    24,
+    25
+  ],
+  "funnel/normal/25": [
+    528,
+    24,
+    25
+  ],
+  "info-circle/normal/25": [
+    572,
+    24,
+    25
+  ],
+  "layout-sidebar/normal/25": [
+    616,
+    24,
+    25
+  ],
+  "pause-fill/normal/25": [
+    660,
+    24,
+    25
+  ],
+  "play-fill/normal/25": [
+    704,
+    24,
+    25
+  ],
+  "scissors/normal/25": [
+    748,
+    24,
+    25
+  ],
+  "skip-forward-fill/normal/25": [
+    792,
+    24,
+    25
+  ],
+  "sliders/normal/25": [
+    836,
+    24,
+    25
+  ],
+  "stop-fill/normal/25": [
+    880,
+    24,
+    25
+  ],
+  "volume-mute/normal/25": [
+    924,
+    24,
+    25
+  ],
+  "volume-up/normal/25": [
+    968,
+    24,
+    25
+  ],
+  "x-lg/normal/25": [
+    1012,
+    24,
+    25
+  ],
+  "zoom-in/normal/25": [
+    1056,
+    24,
+    25
+  ],
+  "zoom-out/normal/25": [
+    1100,
+    24,
+    25
+  ],
+  "arrow-clockwise/normal/30": [
+    0,
+    53,
+    30
+  ],
+  "arrow-counterclockwise/normal/30": [
+    44,
+    53,
+    30
+  ],
+  "arrow-repeat/normal/30": [
+    88,
+    53,
+    30
+  ],
+  "calendar3/normal/30": [
+    132,
+    53,
+    30
+  ],
+  "camera-video/normal/30": [
+    176,
+    53,
+    30
+  ],
+  "check2/normal/30": [
+    220,
+    53,
+    30
+  ],
+  "chevron-left/normal/30": [
+    264,
+    53,
+    30
+  ],
+  "chevron-right/normal/30": [
+    308,
+    53,
+    30
+  ],
+  "clock/normal/30": [
+    352,
+    53,
+    30
+  ],
+  "download/normal/30": [
+    396,
+    53,
+    30
+  ],
+  "exclamation-triangle/normal/30": [
+    440,
+    53,
+    30
+  ],
+  "film/normal/30": [
+    484,
+    53,
+    30
+  ],
+  "funnel/normal/30": [
+    528,
+    53,
+    30
+  ],
+  "info-circle/normal/30": [
+    572,
+    53,
+    30
+  ],
+  "layout-sidebar/normal/30": [
+    616,
+    53,
+    30
+  ],
+  "pause-fill/normal/30": [
+    660,
+    53,
+    30
+  ],
+  "play-fill/normal/30": [
+    704,
+    53,
+    30
+  ],
+  "scissors/normal/30": [
+    748,
+    53,
+    30
+  ],
+  "skip-forward-fill/normal/30": [
+    792,
+    53,
+    30
+  ],
+  "sliders/normal/30": [
+    836,
+    53,
+    30
+  ],
+  "stop-fill/normal/30": [
+    880,
+    53,
+    30
+  ],
+  "volume-mute/normal/30": [
+    924,
+    53,
+    30
+  ],
+  "volume-up/normal/30": [
+    968,
+    53,
+    30
+  ],
+  "x-lg/normal/30": [
+    1012,
+    53,
+    30
+  ],
+  "zoom-in/normal/30": [
+    1056,
+    53,
+    30
+  ],
+  "zoom-out/normal/30": [
+    1100,
+    53,
+    30
+  ],
+  "arrow-clockwise/normal/40": [
+    0,
+    87,
+    40
+  ],
+  "arrow-counterclockwise/normal/40": [
+    44,
+    87,
+    40
+  ],
+  "arrow-repeat/normal/40": [
+    88,
+    87,
+    40
+  ],
+  "calendar3/normal/40": [
+    132,
+    87,
+    40
+  ],
+  "camera-video/normal/40": [
+    176,
+    87,
+    40
+  ],
+  "check2/normal/40": [
+    220,
+    87,
+    40
+  ],
+  "chevron-left/normal/40": [
+    264,
+    87,
+    40
+  ],
+  "chevron-right/normal/40": [
+    308,
+    87,
+    40
+  ],
+  "clock/normal/40": [
+    352,
+    87,
+    40
+  ],
+  "download/normal/40": [
+    396,
+    87,
+    40
+  ],
+  "exclamation-triangle/normal/40": [
+    440,
+    87,
+    40
+  ],
+  "film/normal/40": [
+    484,
+    87,
+    40
+  ],
+  "funnel/normal/40": [
+    528,
+    87,
+    40
+  ],
+  "info-circle/normal/40": [
+    572,
+    87,
+    40
+  ],
+  "layout-sidebar/normal/40": [
+    616,
+    87,
+    40
+  ],
+  "pause-fill/normal/40": [
+    660,
+    87,
+    40
+  ],
+  "play-fill/normal/40": [
+    704,
+    87,
+    40
+  ],
+  "scissors/normal/40": [
+    748,
+    87,
+    40
+  ],
+  "skip-forward-fill/normal/40": [
+    792,
+    87,
+    40
+  ],
+  "sliders/normal/40": [
+    836,
+    87,
+    40
+  ],
+  "stop-fill/normal/40": [
+    880,
+    87,
+    40
+  ],
+  "volume-mute/normal/40": [
+    924,
+    87,
+    40
+  ],
+  "volume-up/normal/40": [
+    968,
+    87,
+    40
+  ],
+  "x-lg/normal/40": [
+    1012,
+    87,
+    40
+  ],
+  "zoom-in/normal/40": [
+    1056,
+    87,
+    40
+  ],
+  "zoom-out/normal/40": [
+    1100,
+    87,
+    40
+  ],
+  "arrow-clockwise/disabled/20": [
+    0,
+    131,
+    20
+  ],
+  "arrow-counterclockwise/disabled/20": [
+    44,
+    131,
+    20
+  ],
+  "arrow-repeat/disabled/20": [
+    88,
+    131,
+    20
+  ],
+  "calendar3/disabled/20": [
+    132,
+    131,
+    20
+  ],
+  "camera-video/disabled/20": [
+    176,
+    131,
+    20
+  ],
+  "check2/disabled/20": [
+    220,
+    131,
+    20
+  ],
+  "chevron-left/disabled/20": [
+    264,
+    131,
+    20
+  ],
+  "chevron-right/disabled/20": [
+    308,
+    131,
+    20
+  ],
+  "clock/disabled/20": [
+    352,
+    131,
+    20
+  ],
+  "download/disabled/20": [
+    396,
+    131,
+    20
+  ],
+  "exclamation-triangle/disabled/20": [
+    440,
+    131,
+    20
+  ],
+  "film/disabled/20": [
+    484,
+    131,
+    20
+  ],
+  "funnel/disabled/20": [
+    528,
+    131,
+    20
+  ],
+  "info-circle/disabled/20": [
+    572,
+    131,
+    20
+  ],
+  "layout-sidebar/disabled/20": [
+    616,
+    131,
+    20
+  ],
+  "pause-fill/disabled/20": [
+    660,
+    131,
+    20
+  ],
+  "play-fill/disabled/20": [
+    704,
+    131,
+    20
+  ],
+  "scissors/disabled/20": [
+    748,
+    131,
+    20
+  ],
+  "skip-forward-fill/disabled/20": [
+    792,
+    131,
+    20
+  ],
+  "sliders/disabled/20": [
+    836,
+    131,
+    20
+  ],
+  "stop-fill/disabled/20": [
+    880,
+    131,
+    20
+  ],
+  "volume-mute/disabled/20": [
+    924,
+    131,
+    20
+  ],
+  "volume-up/disabled/20": [
+    968,
+    131,
+    20
+  ],
+  "x-lg/disabled/20": [
+    1012,
+    131,
+    20
+  ],
+  "zoom-in/disabled/20": [
+    1056,
+    131,
+    20
+  ],
+  "zoom-out/disabled/20": [
+    1100,
+    131,
+    20
+  ],
+  "arrow-clockwise/disabled/25": [
+    0,
+    155,
+    25
+  ],
+  "arrow-counterclockwise/disabled/25": [
+    44,
+    155,
+    25
+  ],
+  "arrow-repeat/disabled/25": [
+    88,
+    155,
+    25
+  ],
+  "calendar3/disabled/25": [
+    132,
+    155,
+    25
+  ],
+  "camera-video/disabled/25": [
+    176,
+    155,
+    25
+  ],
+  "check2/disabled/25": [
+    220,
+    155,
+    25
+  ],
+  "chevron-left/disabled/25": [
+    264,
+    155,
+    25
+  ],
+  "chevron-right/disabled/25": [
+    308,
+    155,
+    25
+  ],
+  "clock/disabled/25": [
+    352,
+    155,
+    25
+  ],
+  "download/disabled/25": [
+    396,
+    155,
+    25
+  ],
+  "exclamation-triangle/disabled/25": [
+    440,
+    155,
+    25
+  ],
+  "film/disabled/25": [
+    484,
+    155,
+    25
+  ],
+  "funnel/disabled/25": [
+    528,
+    155,
+    25
+  ],
+  "info-circle/disabled/25": [
+    572,
+    155,
+    25
+  ],
+  "layout-sidebar/disabled/25": [
+    616,
+    155,
+    25
+  ],
+  "pause-fill/disabled/25": [
+    660,
+    155,
+    25
+  ],
+  "play-fill/disabled/25": [
+    704,
+    155,
+    25
+  ],
+  "scissors/disabled/25": [
+    748,
+    155,
+    25
+  ],
+  "skip-forward-fill/disabled/25": [
+    792,
+    155,
+    25
+  ],
+  "sliders/disabled/25": [
+    836,
+    155,
+    25
+  ],
+  "stop-fill/disabled/25": [
+    880,
+    155,
+    25
+  ],
+  "volume-mute/disabled/25": [
+    924,
+    155,
+    25
+  ],
+  "volume-up/disabled/25": [
+    968,
+    155,
+    25
+  ],
+  "x-lg/disabled/25": [
+    1012,
+    155,
+    25
+  ],
+  "zoom-in/disabled/25": [
+    1056,
+    155,
+    25
+  ],
+  "zoom-out/disabled/25": [
+    1100,
+    155,
+    25
+  ],
+  "arrow-clockwise/disabled/30": [
+    0,
+    184,
+    30
+  ],
+  "arrow-counterclockwise/disabled/30": [
+    44,
+    184,
+    30
+  ],
+  "arrow-repeat/disabled/30": [
+    88,
+    184,
+    30
+  ],
+  "calendar3/disabled/30": [
+    132,
+    184,
+    30
+  ],
+  "camera-video/disabled/30": [
+    176,
+    184,
+    30
+  ],
+  "check2/disabled/30": [
+    220,
+    184,
+    30
+  ],
+  "chevron-left/disabled/30": [
+    264,
+    184,
+    30
+  ],
+  "chevron-right/disabled/30": [
+    308,
+    184,
+    30
+  ],
+  "clock/disabled/30": [
+    352,
+    184,
+    30
+  ],
+  "download/disabled/30": [
+    396,
+    184,
+    30
+  ],
+  "exclamation-triangle/disabled/30": [
+    440,
+    184,
+    30
+  ],
+  "film/disabled/30": [
+    484,
+    184,
+    30
+  ],
+  "funnel/disabled/30": [
+    528,
+    184,
+    30
+  ],
+  "info-circle/disabled/30": [
+    572,
+    184,
+    30
+  ],
+  "layout-sidebar/disabled/30": [
+    616,
+    184,
+    30
+  ],
+  "pause-fill/disabled/30": [
+    660,
+    184,
+    30
+  ],
+  "play-fill/disabled/30": [
+    704,
+    184,
+    30
+  ],
+  "scissors/disabled/30": [
+    748,
+    184,
+    30
+  ],
+  "skip-forward-fill/disabled/30": [
+    792,
+    184,
+    30
+  ],
+  "sliders/disabled/30": [
+    836,
+    184,
+    30
+  ],
+  "stop-fill/disabled/30": [
+    880,
+    184,
+    30
+  ],
+  "volume-mute/disabled/30": [
+    924,
+    184,
+    30
+  ],
+  "volume-up/disabled/30": [
+    968,
+    184,
+    30
+  ],
+  "x-lg/disabled/30": [
+    1012,
+    184,
+    30
+  ],
+  "zoom-in/disabled/30": [
+    1056,
+    184,
+    30
+  ],
+  "zoom-out/disabled/30": [
+    1100,
+    184,
+    30
+  ],
+  "arrow-clockwise/disabled/40": [
+    0,
+    218,
+    40
+  ],
+  "arrow-counterclockwise/disabled/40": [
+    44,
+    218,
+    40
+  ],
+  "arrow-repeat/disabled/40": [
+    88,
+    218,
+    40
+  ],
+  "calendar3/disabled/40": [
+    132,
+    218,
+    40
+  ],
+  "camera-video/disabled/40": [
+    176,
+    218,
+    40
+  ],
+  "check2/disabled/40": [
+    220,
+    218,
+    40
+  ],
+  "chevron-left/disabled/40": [
+    264,
+    218,
+    40
+  ],
+  "chevron-right/disabled/40": [
+    308,
+    218,
+    40
+  ],
+  "clock/disabled/40": [
+    352,
+    218,
+    40
+  ],
+  "download/disabled/40": [
+    396,
+    218,
+    40
+  ],
+  "exclamation-triangle/disabled/40": [
+    440,
+    218,
+    40
+  ],
+  "film/disabled/40": [
+    484,
+    218,
+    40
+  ],
+  "funnel/disabled/40": [
+    528,
+    218,
+    40
+  ],
+  "info-circle/disabled/40": [
+    572,
+    218,
+    40
+  ],
+  "layout-sidebar/disabled/40": [
+    616,
+    218,
+    40
+  ],
+  "pause-fill/disabled/40": [
+    660,
+    218,
+    40
+  ],
+  "play-fill/disabled/40": [
+    704,
+    218,
+    40
+  ],
+  "scissors/disabled/40": [
+    748,
+    218,
+    40
+  ],
+  "skip-forward-fill/disabled/40": [
+    792,
+    218,
+    40
+  ],
+  "sliders/disabled/40": [
+    836,
+    218,
+    40
+  ],
+  "stop-fill/disabled/40": [
+    880,
+    218,
+    40
+  ],
+  "volume-mute/disabled/40": [
+    924,
+    218,
+    40
+  ],
+  "volume-up/disabled/40": [
+    968,
+    218,
+    40
+  ],
+  "x-lg/disabled/40": [
+    1012,
+    218,
+    40
+  ],
+  "zoom-in/disabled/40": [
+    1056,
+    218,
+    40
+  ],
+  "zoom-out/disabled/40": [
+    1100,
+    218,
+    40
+  ]
+}
