@@ -8,54 +8,27 @@ import subprocess
 import sys
 from child_processes import ChildProcesses, parent_lifetime
 from camera_key import load_encryption_key
+from camera_credentials import application_store, decrypt_field
+from windows_security import ProtectionError
 
-# Keep the installation key outside the published source files.
-ENCRYPTION_KEY = load_encryption_key(os.path.dirname(__file__))
- 
-
-# Database file
-DB_FILE = os.path.join(os.path.dirname(__file__), 'camera_credentials.db')
-
-# Initialize encryption
-cipher = Fernet(ENCRYPTION_KEY)
+DB_FILE = None
+cipher = None
 
 # Create or connect to the database
 def init_db():
-    """Initialize database if it doesn't exist"""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS cameras
-                      (id INTEGER PRIMARY KEY, 
-                       ip TEXT, 
-                       username TEXT, 
-                       password TEXT)''')
-    # Add the ptz column if it doesn't exist
-    try:
-        cursor.execute('ALTER TABLE cameras ADD COLUMN ptz INTEGER DEFAULT 0')
-    except:
-        pass
-    conn.commit()
-    conn.close()
+    """Initialize or migrate the Windows-profile credential store once."""
+    global DB_FILE, cipher
+    if cipher is None:
+        directory = application_store()
+        cipher = Fernet(load_encryption_key(directory, create=False))
+        DB_FILE = str(directory / 'camera_credentials.db')
 
 def encrypt_data(data):
+    init_db()
     return cipher.encrypt(str(data).encode())
 
-def is_encrypted(data):
-    """Vérifie si les données sont déjà cryptées"""
-    try:
-        cipher.decrypt(data)
-        return True
-    except Exception:
-        return False
-
 def decrypt_data(encrypted_data):
-    """Décrypte les données si elles sont cryptées"""
-    try:
-        if is_encrypted(encrypted_data):
-            return cipher.decrypt(encrypted_data).decode()
-        return encrypted_data
-    except Exception:
-        return encrypted_data
+    return decrypt_field(cipher, encrypted_data)
 
 # Add camera credentials to the database
 def add_camera(ip, username, password, ptz=0):
@@ -73,6 +46,7 @@ def add_camera(ip, username, password, ptz=0):
 # Get all cameras from the database
 def get_cameras():
     """Get all cameras from database with better error handling"""
+    init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT id, ip, username, password, ptz FROM cameras')
@@ -86,6 +60,7 @@ def get_cameras():
             ip_data = camera[1].encode() if isinstance(camera[1], str) else camera[1]
             username_data = camera[2].encode() if isinstance(camera[2], str) else camera[2]
             password_data = camera[3].encode() if isinstance(camera[3], str) else camera[3]
+            decrypt_field(cipher, password_data)
             
             decrypted_camera = (
                 camera[0],
@@ -95,23 +70,17 @@ def get_cameras():
                 camera[4]
             )
             decrypted_cameras.append(decrypted_camera)
-        except Exception as e:
-            print(f"Error processing camera {camera[0]}: {e}")
-            continue
+        except Exception:
+            raise ProtectionError('Unable to read camera credentials. No data was changed.') from None
     return decrypted_cameras
 
 def get_current_python():
     """Get the current Python executable path"""
     return sys.executable
 
-# Play camera stream
-def play_camera(ip, username, password):
-    python_exe = get_current_python()
-    script_path = os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py')
-    subprocess.Popen([python_exe, script_path, ip, username, password])
-
 # Delete camera from the database
 def delete_camera(camera_id):
+    init_db()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('DELETE FROM cameras WHERE id = ?', (camera_id,))
@@ -128,32 +97,6 @@ def update_camera(camera_id, ip, username, password, ptz=0):
     cursor = conn.cursor()
     cursor.execute('UPDATE cameras SET ip = ?, username = ?, password = ?, ptz = ? WHERE id = ?', 
                   (encrypted_ip, encrypted_username, encrypted_password, ptz, camera_id))
-    conn.commit()
-    conn.close()
-
-def migrate_existing_data():
-    """
-    Fonction à exécuter une seule fois pour migrer les données existantes
-    vers le format crypté
-    """
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, ip, username, password FROM cameras')
-    cameras = cursor.fetchall()
-    
-    for camera in cameras:
-        try:
-            # Ne crypter que si les données ne sont pas déjà cryptées
-            ip_data = camera[1] if isinstance(camera[1], bytes) else encrypt_data(camera[1])
-            username_data = camera[2] if isinstance(camera[2], bytes) else encrypt_data(camera[2])
-            password_data = camera[3] if is_encrypted(camera[3]) else encrypt_data(camera[3])
-            
-            cursor.execute('UPDATE cameras SET ip = ?, username = ?, password = ? WHERE id = ?',
-                         (ip_data, username_data, password_data, camera[0]))
-        except Exception as e:
-            print(f"Migration error for camera {camera[0]}: {e}")
-            continue
-    
     conn.commit()
     conn.close()
 
@@ -382,24 +325,18 @@ class CameraApp:
             messagebox.showerror("Error", "Python interpreter unavailable")
             return
         
-        decrypted_password = cipher.decrypt(camera[3]).decode()
         self.children.spawn([python_exe,
                                   os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py'),
-                                  '--',  # Do not parse camera credentials as command-line options.
-                                  str(camera[0]),  # ID de la caméra en premier argument
-                                  camera[1],       # Adresse IP
-                                  camera[2],       # Username
-                                  decrypted_password], relay_output=True)
+                                  '--camera-id', str(camera[0])], relay_output=True)
 
     def play_ptz_thread(self, camera):
         python_exe = get_current_python()
         if not python_exe:
             messagebox.showerror("Error", "Python interpreter unavailable")
             return
-        decrypted_password = cipher.decrypt(camera[3]).decode()
         self.children.spawn([python_exe,
                           os.path.join(os.path.dirname(__file__), 'ptz_keyboard_control.py'),
-                          str(camera[0]), camera[1], camera[2], decrypted_password])
+                          '--camera-id', str(camera[0])])
 
     def on_closing(self):
         self.children.close()
@@ -411,14 +348,17 @@ class CameraApp:
         event.widget.tk_focusNext().focus_set()
 
 if __name__ == "__main__":
-    init_db()
-    try:
-        # Tentative de migration des données existantes
-        migrate_existing_data()
-    except Exception as e:
-        print(f"Global migration error: {e}")
-    
     root = tk.Tk()
+    try:
+        init_db()
+    except (ProtectionError, OSError, sqlite3.Error):
+        root.withdraw()
+        messagebox.showerror('Camera Credentials',
+            'Unable to unlock camera credentials for this Windows profile. '
+            'Close other camera applications and check the local data directory. '
+            'Camera credentials may need to be entered again.')
+        root.destroy()
+        sys.exit(1)
     root.title("Camera Manager")
     root.geometry("390x250")  # Modification de la largeur initiale à 390px
     app = CameraApp(root)

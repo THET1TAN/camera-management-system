@@ -199,6 +199,7 @@ class ViewerSessionTests(unittest.TestCase):
         with patch.dict(sys.modules, {'cryptography': Mock(), 'cryptography.fernet': crypto}), \
                 patch('camera_key.load_encryption_key', return_value=None):
             cls.viewer = importlib.import_module('camera_viewer')
+        cls.viewer.cipher = crypto.Fernet.return_value
 
     def setUp(self):
         gc.collect()
@@ -455,8 +456,8 @@ def window():
     root.after(5000, ptz.close_controller)
     return root
 with patch.dict(sys.modules, {'onvif': SimpleNamespace(ONVIFCamera=Mock(return_value=camera))}):
-    with patch.object(ptz.tk, 'Tk', window):
-        assert ptz.main(['1', 'offline', 'fake-user', 'fake-password']) == 0
+    with patch.object(ptz.tk, 'Tk', window), patch('camera_credentials.load_camera', return_value=('offline', 'fake-user', 'fake-password')):
+        assert ptz.main(['--camera-id', '1']) == 0
 service.ContinuousMove.assert_not_called()
 service.AbsoluteMove.assert_not_called()
 service.RelativeMove.assert_not_called()

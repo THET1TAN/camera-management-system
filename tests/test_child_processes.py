@@ -167,8 +167,8 @@ def window():
     root.after(5000, ptz.close_controller)
     return root
 with patch.dict(sys.modules, {'onvif': SimpleNamespace(ONVIFCamera=Mock(return_value=camera))}):
-    with patch.object(ptz.tk, 'Tk', window):
-        assert ptz.main(['id', 'ip', 'user', 'password']) == 0
+    with patch.object(ptz.tk, 'Tk', window), patch('camera_credentials.load_camera', return_value=('ip', 'user', 'password')):
+        assert ptz.main(['--camera-id', 'id']) == 0
 assert not ptz.command_worker.is_alive()
 Path(sys.argv[1]).write_text(json.dumps([call.args[0] for call in service.Stop.call_args_list]))
 """
@@ -204,6 +204,7 @@ class WindowOwnershipTests(unittest.TestCase):
             with patch('camera_key.load_encryption_key', return_value=None):
                 cls.viewer = importlib.import_module('camera_viewer')
                 cls.manager = importlib.import_module('camera_manager')
+        cls.viewer.cipher = cls.manager.cipher = crypto.Fernet.return_value
 
     def check_window(self, module, cls, with_manager):
         root = module.tk.Tk()

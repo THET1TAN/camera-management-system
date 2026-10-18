@@ -215,18 +215,21 @@ class EnvironmentAndConfigurationTests(unittest.TestCase):
             root = Path(directory)
             key = Fernet.generate_key()
             cipher = Fernet(key)
-            (root/'.camera_encryption.key').write_bytes(key)
+            from camera_key import KEY_FILE, save_encryption_key
+            credentials = root / 'credentials'
+            save_encryption_key(credentials, key)
+            key_before = (credentials / KEY_FILE).read_bytes()
             # Commit the fixture, then release its Windows file handle before cleanup.
-            with closing(sqlite3.connect(root/'camera_credentials.db')) as db, db:
+            with closing(sqlite3.connect(credentials/'camera_credentials.db')) as db, db:
                 db.execute('CREATE TABLE cameras (id INTEGER, ip BLOB, username BLOB, password BLOB)')
                 db.execute('INSERT INTO cameras VALUES (42,?,?,?)',
                            tuple(cipher.encrypt(value.encode()) for value in ('192.0.2.99', 'test', 'test-secret')))
-            before = (root/'camera_credentials.db').read_bytes()
+            before = (credentials/'camera_credentials.db').read_bytes()
             with patch.dict('os.environ', {}, clear=True):
                 cameras, _ = load_cameras(Settings(cameras={'42': {'zone': 'America/Toronto'}}), root)
             self.assertEqual((cameras[0].camera_id, cameras[0].zone), (42, 'America/Toronto'))
-            self.assertEqual((root/'camera_credentials.db').read_bytes(), before)
-            self.assertEqual((root/'.camera_encryption.key').read_bytes(), key)
+            self.assertEqual((credentials/'camera_credentials.db').read_bytes(), before)
+            self.assertEqual((credentials/KEY_FILE).read_bytes(), key_before)
 
     def test_missing_key_is_not_created_by_diagnostics_or_playback(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict('os.environ', {}, clear=True):

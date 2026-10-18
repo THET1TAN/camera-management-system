@@ -2,6 +2,7 @@
 import contextlib
 import io
 import os
+import tempfile
 import sys
 from types import SimpleNamespace
 import unittest
@@ -36,6 +37,9 @@ class WithdrawnCTests(unittest.TestCase):
         self.assert_b_startup({})
 
     def assert_b_startup(self, environment):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        environment = dict(environment, CAMERA_DATA_DIRECTORY=directory.name)
         class ReachedWindow(Exception):
             pass
         service = Mock()
@@ -51,9 +55,10 @@ class WithdrawnCTests(unittest.TestCase):
                     patch.dict(sys.modules, {'onvif': SimpleNamespace(ONVIFCamera=Mock(return_value=camera))}), \
                     patch.object(ptz, 'PTZDiagnostics', return_value=Mock()), \
                     patch.object(ptz, 'create_key_state_reader', return_value=None), \
+                    patch('camera_credentials.load_camera', return_value=('test-host', 'test-user', 'test-password')), \
                     patch.object(ptz.tk, 'Tk', side_effect=ReachedWindow):
                 with self.assertRaises(ReachedWindow):
-                    ptz.main(['test', 'test-host', 'test-user', 'test-password'])
+                    ptz.main(['--camera-id', 'test'])
             self.assertIs(type(ptz.command_worker), PTZCommandWorker)
             self.assertTrue(ptz.command_worker.neutral_transitions)
             self.assertFalse(ptz.command_worker.conservative_stops)

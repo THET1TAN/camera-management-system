@@ -1,5 +1,15 @@
 # Camera Management System
 
+## Local security update — Windows user-bound credentials
+
+The main sources now protect the camera encryption key with Windows DPAPI under
+the current user. Credentials, settings, layout and new diagnostics use
+`%LOCALAPPDATA%\CameraManagementSystem`, outside the source checkout. Close all
+older application windows before first startup. Existing encrypted credentials
+are verified and re-encrypted with a new random key; the source folder's database
+and raw key are retired only after the protected store has been checked. Archived version folders are
+unchanged. See [credential protection and migration](docs/windows-credentials.md).
+
 ## Current release: v0.2.11 — session restoration and English interface
 
 The main application and [`~v0.2.11`](./~v0.2.11) contain this version, promoted
@@ -167,7 +177,7 @@ cd camera-management-system
 python -m pip install -r requirements.txt
 ```
 
-For a **new installation**, initialize the database and add a camera first:
+For a **new installation**, add a camera in Camera Manager:
 
 ```powershell
 python camera_manager.py
@@ -238,20 +248,26 @@ launched independently remain independent.
 
 ## Existing installations and encryption key
 
-Keep `camera_credentials.db` and its matching `.camera_encryption.key` together
-when backing up or moving an installation. These local files are excluded from
-GitHub and the source snapshot.
+The active database and protected key are stored in
+`%LOCALAPPDATA%\CameraManagementSystem\credentials`. Windows DPAPI protects the
+Fernet key for the current user, and the private directory permits that user and
+SYSTEM. Updates under the same Windows profile keep working; a simple file copy
+does not transfer access to another profile or PC. A new installation generates
+its own key. There is no portable key export or environment-key override.
 
-The application reads the key beside its scripts, or from `CAMERA_ENCRYPTION_KEY`
-if that environment variable is set. A source snapshot such as `~v0.2.10` can also
-read the key in its parent application folder.
+Close older windows before the first updated startup. Migration verifies all
+encrypted fields, copies the database with SQLite's backup API, checks the
+protected key and re-encrypted database, and only then removes the source database
+and legacy raw key. It retains a DPAPI-protected local migration backup and a
+separately protected legacy key for reading existing archive cache metadata. A
+damaged credential, missing key or conflicting store stops migration without
+reinterpreting ciphertext as plaintext. Previous raw-key backups and OneDrive
+history are not erased by this update.
 
-When upgrading an older installation that embedded its key in the source, save
-that **same existing key** in `.camera_encryption.key` before replacing the old
-files. Changing the key does not decrypt the old database. An existing database
-without a configured key stops startup with recovery instructions instead of
-creating a replacement. A new installation without a database generates its own
-key.
+On a new PC or after losing the Windows profile's protection keys, add the cameras
+again using their actual credentials. DPAPI does not prevent extraction by code
+already running as the authorized user, and enterprise roaming/recovery can
+provide exceptions to machine binding. See the [security guide](docs/windows-credentials.md).
 
 Fernet protects stored credentials; it does not establish encrypted ONVIF or RTSP
 transport. Use a network appropriate for your camera's connection settings.

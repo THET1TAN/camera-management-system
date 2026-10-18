@@ -227,10 +227,17 @@ def main(argv=None):
     global closing, window_active, preset_request
     global session_window, placement
     argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 4:
-        print("Usage: ptz_keyboard_control.py camera_id ip username password")
+    if len(argv) != 2 or argv[0] != '--camera-id':
+        print('Usage: ptz_keyboard_control.py --camera-id ID (credentials are loaded locally)')
         return 1
-    camera_id, camera_ip, username, password = argv
+    camera_id = argv[1]
+    from camera_credentials import load_camera
+    from windows_security import ProtectionError
+    try:
+        camera_ip, username, password = load_camera(camera_id)
+    except (ProtectionError, OSError):
+        print('Camera credentials unavailable for this Windows profile.')
+        return 1
     session_window = SessionWindow.from_environment(camera_id, 'ptz')
     placement = None
     from onvif import ONVIFCamera
@@ -275,7 +282,10 @@ def main(argv=None):
     preset_request = None
     diagnostics = None
     try:
-        diagnostics = PTZDiagnostics(Path(__file__).with_name(f'ptz_control_{os.getpid()}.log'))
+        from camera_paths import data_directory
+        log_directory = data_directory() / 'ptz-logs'
+        log_directory.mkdir(parents=True, exist_ok=True)
+        diagnostics = PTZDiagnostics(log_directory / f'ptz_control_{os.getpid()}.log')
         diagnostics.record('session', version=VERSION, revision=REVISION,
                            move_timeout=move_timeout, conservative_stops=conservative_stops,
                            neutral_transitions=neutral_transitions,

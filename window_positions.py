@@ -19,8 +19,9 @@ import time
 
 
 def positions_path():
+    from camera_paths import data_directory
     return Path(os.environ.get('CAMERA_WINDOW_POSITIONS_FILE') or
-                Path(__file__).resolve().with_name('camera_window_positions.db'))
+                data_directory() / 'camera_window_positions.db')
 
 
 @dataclass(frozen=True, order=True)

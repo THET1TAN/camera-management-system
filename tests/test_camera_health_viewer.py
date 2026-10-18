@@ -16,6 +16,7 @@ class ViewerHealthTests(unittest.TestCase):
         with patch.dict(sys.modules, {'cryptography': Mock(), 'cryptography.fernet': crypto}), \
                 patch('camera_key.load_encryption_key', return_value=None):
             cls.viewer = importlib.import_module('camera_viewer')
+        cls.viewer.cipher = crypto.Fernet.return_value
 
     def setUp(self):
         gc.collect()
