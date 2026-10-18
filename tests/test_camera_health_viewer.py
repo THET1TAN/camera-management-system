@@ -1,4 +1,5 @@
 import importlib
+import gc
 from concurrent.futures import Future
 import sys
 import unittest
@@ -17,6 +18,7 @@ class ViewerHealthTests(unittest.TestCase):
             cls.viewer = importlib.import_module('camera_viewer')
 
     def setUp(self):
+        gc.collect()
         self.root = self.viewer.tk.Tk()
         self.root.withdraw()
         self.monitor = Mock()
@@ -35,8 +37,10 @@ class ViewerHealthTests(unittest.TestCase):
         if self.app.reset_after is not None:
             self.root.after_cancel(self.app.reset_after)
         self.root.destroy()
+        self.app.session.pool.shutdown(wait=True)
         for item in reversed(self.patches):
             item.stop()
+        gc.collect()
 
     def tick(self):
         self.root.after_cancel(self.app.health_after)
@@ -89,12 +93,22 @@ class ViewerHealthTests(unittest.TestCase):
         canvas, _, label = self.app.health_widgets[1]
         frame = label.master
         buttons = [w.cget('text') for w in frame.winfo_children() if isinstance(w, self.viewer.tk.Button)]
-        self.assertEqual(buttons, ['Play', 'PTZ'])
+        self.assertEqual(buttons[:2], ['Play', 'PTZ'])
+        self.assertEqual(len(buttons), 3)  # Compact archive shortcut.
         self.assertLess(frame.winfo_reqwidth() + 95, 450)
         self.assertEqual(self.app.manage_button.cget('text'), 'Manage Cameras')
         self.assertEqual(self.app.reset_positions_button.cget('text'),
-                         'Réinitialiser la position des fenêtres')
+                         'Reset Window Positions')
         self.assertLess(self.app.reset_positions_button.winfo_reqwidth(), 450)
+        self.assertEqual(self.app.playback_button.cget('text'), 'Recordings')
+        self.assertEqual(self.app.restore_button.cget('text'), 'Restore All')
+        self.assertLess(self.app.restore_button.winfo_reqwidth(), 450)
+
+    def test_archive_hover_does_not_replace_availability_summary(self):
+        summary = self.app.status_detail.cget('text')
+        self.app.playback_button.event_generate('<Enter>')
+        self.assertEqual(self.app.status_detail.cget('text'), summary)
+        self.app.playback_help.hide()
 
     def test_reset_button_stays_nonblocking_and_disables_duplicate_requests(self):
         future = Future()
@@ -150,7 +164,7 @@ class ViewerHealthTests(unittest.TestCase):
         self.assertEqual(self.app.status_detail.winfo_reqheight(), initial_height)
         rows = self.app.camera_list.get('1.0', 'end').splitlines()
         for index in (1, 2, 3):
-            self.assertIn(f'Camera : {index} ', rows)
+            self.assertIn(f'Camera {index} ', rows)
 
     def test_summary_refreshes_on_recovery_and_empty_list(self):
         self.monitor.updates.return_value = [HealthUpdate(1, 'offline', '', 100, 90)]

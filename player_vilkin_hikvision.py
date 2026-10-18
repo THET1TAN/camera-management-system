@@ -8,20 +8,23 @@ from child_processes import parent_lifetime
 from player_supervisor import PlayerSupervisor, PlayerSettings
 from player_diagnostics import StackCapture
 from window_positions import WindowPlacement
+from camera_session import SessionWindow
 
 
 class VideoPlayer:
     CONTROL_BAR_HEIGHT = 40
 
     def __init__(self, camera_id, camera_ip='', username='', password='', *, uri=None,
-                 settings=None, supervisor_factory=PlayerSupervisor, placement_factory=WindowPlacement):
+                 settings=None, supervisor_factory=PlayerSupervisor, placement_factory=WindowPlacement,
+                 session=None):
         settings = settings or PlayerSettings.from_environment()
         self.root = tk.Tk()
         self.base_title = f'Camera {camera_id}'
         self.root.title(self.base_title)
         self.root.geometry('800x600')
         self.closing = False
-        self.is_muted = False
+        self.session = session
+        self.is_muted = session.entry.muted if session is not None else False
         self.volume = 100
         self._sized = False
         self._timer = None
@@ -48,6 +51,7 @@ class VideoPlayer:
             command=self.toggle_mute, width=30, height=30, relief='flat', bg='#C0C0C0',
             activebackground='#D0D0D0', bd=0, highlightthickness=0)
         self.mute_button.pack(side=tk.LEFT, padx=5, pady=5)
+        self._update_mute_appearance()
         self.bitrate_label = tk.Label(self.control_bar, text='-- Mbps', fg='white',
             bg='#2b2b2b', font=('Arial', 9))
         self.bitrate_label.pack(side=tk.RIGHT, padx=10)
@@ -64,24 +68,33 @@ class VideoPlayer:
             user32.SetWindowLongW(hwnd, -16, style | 0x02000000)
         self.supervisor = supervisor_factory(camera_id,
             {'host': camera_ip, 'username': username or '', 'password': password or '', 'uri': uri,
-             'tk_version': str(self.root.tk.call('info', 'patchlevel'))}, hwnd, settings)
+             'tk_version': str(self.root.tk.call('info', 'patchlevel')),
+             'muted': self.is_muted, 'volume': self.volume}, hwnd, settings)
         self.root.protocol('WM_DELETE_WINDOW', self.on_closing)
         self._dumps = StackCapture(camera_id, 'tk')
         self._dumps.arm()
         self._timer = self.root.after(100, self.check_stream_status)
         self._bitrate_timer = self.root.after(1000, self.update_bitrate)
-        self.placement = placement_factory(self.root, camera_id)
+        placement_options = ({'storage_id': session.entry.placement_key,
+                              'fallback_id': str(camera_id), 'mirror_id': str(camera_id)}
+                             if session is not None else {})
+        self.placement = placement_factory(self.root, camera_id, **placement_options)
 
     def toggle_mute(self):
         if self.closing:
             return
         self.is_muted = not self.is_muted
         self.supervisor.set_audio(self.is_muted, self.volume)
+        self._update_mute_appearance()
+        if self.session is not None:
+            self.session.audio(self.is_muted)
+
+    def _update_mute_appearance(self):
         self.mute_button.config(
             image=self.volume_mute_icon if self.is_muted else self.volume_up_icon,
             relief='sunken' if self.is_muted else 'flat',
-            bg='#E0E0E0' if self.is_muted else '#C0C0C0',
-            activebackground='#F0F0F0' if self.is_muted else '#D0D0D0')
+            bg='#C98282' if self.is_muted else '#C0C0C0',
+            activebackground='#D69A9A' if self.is_muted else '#D0D0D0')
         self.root.title(self.base_title + (' (Muted)' if self.is_muted else ''))
 
     def set_volume(self, value):
@@ -127,6 +140,8 @@ class VideoPlayer:
             return
         self.closing = True
         self.placement.close()
+        if self.session is not None:
+            self.session.close(preserve=parent_lifetime.closed.is_set())
         if self._timer is not None:
             self.root.after_cancel(self._timer)
             self._timer = None
@@ -139,7 +154,8 @@ class VideoPlayer:
 
     def _finish_close(self):
         # Keep the HWND alive until its native session is reaped. No join on Tk.
-        if self.supervisor.closed.is_set() and self.placement.finished():
+        if (self.supervisor.closed.is_set() and self.placement.finished()
+                and (self.session is None or self.session.finished())):
             self._dumps.close()
             self.root.destroy()
         else:
@@ -170,7 +186,9 @@ def main():
         parts = urlsplit(args.test_uri)
         if parts.hostname not in ('127.0.0.1', '::1', 'localhost') or parts.username is not None:
             parser.error('--test-uri requires an unauthenticated loopback source')
-    player = VideoPlayer(args.camera_id, args.camera_ip, args.username, args.password, uri=args.test_uri)
+    session = SessionWindow.from_environment(args.camera_id, 'video')
+    player = VideoPlayer(args.camera_id, args.camera_ip, args.username, args.password,
+                         uri=args.test_uri, session=session)
     parent_lifetime.bind(player.root, player.on_closing)
     player.run()
 

@@ -1,6 +1,58 @@
 # Camera Management System
 
-## Current release: v0.2.10 — remembered window layout
+## Current release: v0.2.11 — session restoration and English interface
+
+The main application and [`~v0.2.11`](./~v0.2.11) contain this version, promoted
+on October 17, 2026. Previous source snapshots, including `~v0.2.10`, are preserved.
+
+- **Restore All:** reopen the previous Viewer's video and PTZ windows with their
+  individual layouts and video mute settings. Repeated clicks reuse open windows.
+- **Remember each instance:** multiple windows for one camera keep separate layouts.
+  Closing Viewer preserves its session; manually closing a child removes it.
+- **Recognize mute:** muted live-video buttons have a soft red background. Saved
+  mute settings reach the player before playback starts and survive reconnection.
+- **English interface:** controls, tooltips, application messages and launch output
+  use English. Restore help appears on hover, without a persistent description.
+- **Keep windows accessible:** PTZ now uses the existing placement/reset mechanism;
+  resetting positions preserves session membership and mute preferences.
+
+Start the main application from its folder:
+
+```powershell
+.\Lancer-Camera.cmd
+```
+
+`Lancer-test-issue-18.cmd` remains a compatibility shortcut to the same application.
+See the [session guide](docs/session-restore.md) and
+[v0.2.11 release notes](note_de_version-v0.2.11.txt). Local credentials, encryption
+keys, session databases, camera settings, logs and media are excluded from publication.
+No rebuilt executable is included; run the Python sources with the existing dependencies.
+
+## Recordings and known qualification limits
+
+This version also includes the existing archive work from PR #16 / issue #15:
+an integrated archive window, camera-badge calendar, timeline, ISAPI/VideoLink
+queries, local cache, progressive MPEG/HLS preparation, playback controls and
+original/range export. The [consolidated guide](docs/archive-playback-consolidated.md)
+retains its earlier camera evidence and investigation history.
+
+Automated regression coverage includes offline/synthetic archive cases. Physical
+camera/audio qualification, the CGI archive-boundary jump and actual preview
+cadence remain open under issue #15. No dedicated preview proxy or RTSP/cache
+bridge is claimed. These limits are not resolved by promoting the current sources.
+
+Use **Recordings** in Camera Viewer, or `Lancer-Enregistrements.cmd` for the
+standalone archive browser. Both Windows launchers default to the user's
+`%LOCALAPPDATA%\Programs\Python\Python39\python.exe`; set `CAMERA_PYTHON` to
+override that explicit path. They do not inject temporary test dependencies.
+Opening its calendar does not start a video. Add the
+new `tzdata` dependency using the same Python interpreter as the application.
+See [behavior, design and limits](docs/archive-playback.md) and
+[commands and test sequence](docs/archive-playback-testing.md).
+See the [progressive start, scrubbing and English UI trial](docs/archive-playback-progressive.md)
+and [environment and one-camera diagnostics](docs/archive-playback-diagnostics.md).
+
+## Previous release: v0.2.10 — remembered window layout
 
 Released September 18, 2026, with the changes from
 [PR #13](https://github.com/THET1TAN/camera-management-system/pull/13), resolving
@@ -14,7 +66,7 @@ after restarting Camera Viewer.
   on restoration, including portrait screens, without added side margins.
 - **Recover a visible layout:** if the monitor arrangement changes, windows return
   to visible positions on the current primary screen.
-- **Reset the layout:** choose **Réinitialiser la position des fenêtres** below
+- **Reset the layout:** choose **Reset Window Positions** below
   **Manage Cameras** to clear saved positions and sizes and reposition open players.
   Open players keep their current size where it fits; future openings use defaults.
 
@@ -23,8 +75,8 @@ and maximized/minimized states are not saved. Layout data stays locally in
 `camera_window_positions.db`, separate from camera credentials and excluded from
 Git. See the [window layout guide](docs/window-positions.md) for behavior and limits.
 
-Root sources and [`~v0.2.10`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.10)
-contain this version. See the [v0.2.10 release notes](note_de_version-v0.2.10.txt).
+[`~v0.2.10`](https://github.com/THET1TAN/camera-management-system/tree/main/~v0.2.10)
+preserves this stable version. See the [v0.2.10 release notes](note_de_version-v0.2.10.txt).
 Previous snapshots remain unchanged. No rebuilt executable is included.
 
 ## Previous release: v0.2.9 — nonblocking RTSP recovery
@@ -217,7 +269,13 @@ $env:CAMERA_WINDOW_POSITIONS_FILE = Join-Path $env:TEMP ('camera-layout-tests-' 
 python -m unittest discover -s tests
 ```
 
-The v0.2.10 suite has **305 passing tests** on Windows, including
+The v0.2.11 publication checkout has **446 passing tests** on Windows / Python
+3.14, completed in 116.756 seconds. Session and English-interface checks also
+passed on the installed Python 3.9 runtime before promotion. The matching
+source snapshot is checked against the active files. Physical audio, camera
+behavior and monitor hotplug still require field qualification.
+
+The preserved v0.2.10 suite has **305 passing tests** on Windows, including
 remembered positions and sizes, Windows frame alignment, reset behavior, storage
 upgrades and concurrent players. The temporary layout database above keeps test
 windows separate from the installation's saved layout.

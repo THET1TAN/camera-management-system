@@ -48,6 +48,9 @@ class ChildProcesses:
         self.processes = []
         self.closing = False
         self._deadline = None
+        # Optional in-process windows that own supervised native resources.
+        # Their HWNDs must outlive those resources, just like process children.
+        self.close_guards = []
 
     @staticmethod
     def _close_pipe(process):
@@ -66,11 +69,13 @@ class ChildProcesses:
                 self._close_pipe(process)
         self.processes = alive
 
-    def spawn(self, command, *, relay_output=False):
+    def spawn(self, command, *, relay_output=False, env_overrides=None):
         if self.closing:
             return None
         self._reap()
         env = os.environ.copy()
+        if env_overrides:
+            env.update(env_overrides)
         env[PARENT_PIPE_ENV] = '1'
         if relay_output:
             env['PYTHONUNBUFFERED'] = '1'
@@ -112,7 +117,7 @@ class ChildProcesses:
 
     def _finish_close(self):
         self._reap()
-        if not self.processes:
+        if not self.processes and all(guard() for guard in self.close_guards):
             self.root.destroy()
             return
         if self.clock() >= self._deadline:
