@@ -980,7 +980,7 @@ class Controller:
             self.log = Diagnostics(self.store.root)
             sources = sorted((Path(__file__).parent).glob('*.py'))
             digest = hashlib.sha256(b''.join(p.name.encode()+p.read_bytes() for p in sources)).hexdigest()
-            self.log.event('runtime-build', build='0.2.11-dev-consolidated-1', source_digest=digest,
+            self.log.event('runtime-build', build='0.2.11', source_digest=digest,
                            python=__import__('sys').version.split()[0])
             self.engine = Engine(self.hwnd, self._native_event)
             self.server = SessionServer(self._native_event, self.store)

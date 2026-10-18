@@ -1,5 +1,12 @@
 # PR #16 : sélection, export, scrubbing et stockage
 
+Publication update — October 17, 2026: these sources are included in the
+v0.2.11 main application. The evidence below records earlier development
+revisions; its statements about unrun tests and draft-only publication describe
+that earlier state. See the current README, v0.2.11 release notes and session
+guide for release validation. The CGI boundary jump and physical preview/audio
+qualification remain open under issue #15.
+
 Révision de départ vérifiée : `3b732cd2aebb347a7a650f92b7fb1016300f7010`.
 La racine de Camera contenait les mêmes 88 fichiers que la branche de la PR,
 sans modification locale divergente. Le journal du dernier essai porte

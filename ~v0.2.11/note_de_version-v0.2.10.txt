@@ -1,0 +1,44 @@
+Camera Management System — v0.2.10
+Date : 18 septembre 2026
+PR de fonctionnalité : https://github.com/THET1TAN/camera-management-system/pull/13
+Issue : https://github.com/THET1TAN/camera-management-system/issues/6
+
+Nouveautés et corrections
+------------------------
+- Mémorisation locale de la position et de la taille de chaque fenêtre vidéo,
+  associées à la caméra, y compris après un redémarrage de Camera Viewer.
+- Conservation de la taille choisie à la réouverture et à l'arrivée de la vidéo.
+- Maintien de l'aimantation Windows Snap pendant le placement et le redimensionnement.
+- Restauration au bord visible de l'écran sans marge latérale supplémentaire,
+  notamment sur un écran en portrait.
+- Retour à une disposition visible si les écrans changent ou sont déconnectés.
+- Bouton « Réinitialiser la position des fenêtres » : effacement des positions et
+  tailles mémorisées, puis repositionnement des lecteurs déjà ouverts.
+- Conservation du comportement de fermeture des fenêtres enfants et des fonctions
+  de lecture, de reconnexion RTSP, de disponibilité et du contrôleur PTZ r9 B.
+
+Installation et données locales
+------------------------------
+Les sources actives et le dossier ~v0.2.10 correspondent à cette version.
+Les dossiers des versions précédentes restent inchangés. Aucun exécutable
+recompilé n'est inclus ; lancer les sources Python avec les dépendances existantes.
+Le titre de Camera Viewer affiche v0.2.10. Le contrôleur PTZ conserve son propre
+identifiant v0.2.7 r9 B, son comportement n'ayant pas changé.
+
+Le placement est stocké dans camera_window_positions.db, séparément des paramètres
+et identifiants des caméras. Les bases privées, clés, configurations locales et
+journaux ne sont pas inclus dans le dossier de version publié.
+
+Validation et limites
+--------------------
+305 tests Windows passent pour la fonctionnalité, dont 59 cas ajoutés à v0.2.9.
+La suite passe également depuis le dossier ~v0.2.10 : 305 tests en 29,394 s,
+sans test ignoré.
+Les positions négatives, tailles, resets, sauvegardes concurrentes, bordures Windows
+et fermetures/réouvertures sont couverts. Joël a confirmé le fonctionnement après
+un essai de restauration sur écran portrait.
+Les groupes Snap et l'état maximisé/réduit ne sont pas mémorisés. Les changements
+de topologie sont testés par simulation ; les transitions entre DPI différents,
+le débranchement physique d'écrans et l'exécutable empaqueté restent à valider.
+
+Guide de fonctionnement et détails de validation : docs/window-positions.md.

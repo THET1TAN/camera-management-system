@@ -163,6 +163,10 @@ def run(config, commands, vlc_module=None, emit=None):
             attached.append(event)
         if commands.stop.is_set():
             return
+        # Request silence before playback as well as after audio output starts.
+        # Some libVLC outputs ignore pre-play mute, hence the post-play reapply.
+        call('audio', player.audio_set_mute, commands.audio[0])
+        call('audio', player.audio_set_volume, 0 if commands.audio[0] else commands.audio[1])
         if call('play', player.play) == -1:
             emit({'kind': 'failure', 'reason': 'vlc-error'})
             return

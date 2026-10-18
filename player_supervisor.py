@@ -109,7 +109,9 @@ class PlayerSupervisor:
         self._snapshot = PlayerSnapshot()
         self._stop = threading.Event()
         self.closed = threading.Event()
-        self._audio = (False, 100)
+        # Set before starting the supervisor; the first session already knows mute.
+        self._audio = (bool(config.get('muted', False)),
+                       max(0, min(100, int(config.get('volume', 100)))))
         self._heartbeat = time.monotonic()
         self._log_directory = log_directory
         self.camera_id = safe_camera_id(camera_id)

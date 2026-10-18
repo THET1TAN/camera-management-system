@@ -159,6 +159,7 @@ class CallbackAndDiscoveryTests(unittest.TestCase):
         manager = SimpleNamespace(event_attach=attach, event_detach=native('detach'))
         player = SimpleNamespace(set_media=native('set_media'), set_hwnd=native('hwnd'),
             event_manager=native('event_manager', manager), play=play, stop=native('stop'),
+            audio_set_mute=native('mute'), audio_set_volume=native('volume'),
             release=native('release-player'))
         media = SimpleNamespace(release=native('release-media'))
         instance = SimpleNamespace(media_player_new=native('player', player), media_new=native('media', media),

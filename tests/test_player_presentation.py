@@ -71,7 +71,7 @@ class PlayerPresentationTests(unittest.TestCase):
         self.assertEqual(self.app.video_surface.winfo_id(), hwnd)
         self.factory.assert_called_once()
 
-    def test_legacy_mute_visuals_and_title_remain_selected_through_an_outage(self):
+    def test_muted_red_button_and_title_remain_selected_through_an_outage(self):
         self.assertEqual(self.app.mute_button.cget('text'), '')
         self.assertEqual(self.app.volume_up_icon.width(), 16)
         self.assertEqual(self.app.volume_mute_icon.width(), 16)
@@ -80,7 +80,7 @@ class PlayerPresentationTests(unittest.TestCase):
         self.poll_status()
         self.assertEqual(self.app.root.title(), 'Camera presentation (Muted)')
         self.assertEqual(self.app.mute_button.cget('image'), str(self.app.volume_mute_icon))
-        self.assertEqual(self.app.mute_button.cget('background'), '#E0E0E0')
+        self.assertEqual(self.app.mute_button.cget('background'), '#C98282')
         self.assertEqual(self.app.mute_button.cget('relief'), 'sunken')
         self.app.mute_button.invoke()
         self.assertEqual(self.app.mute_button.cget('image'), str(self.app.volume_up_icon))

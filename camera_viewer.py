@@ -9,6 +9,7 @@ from camera_health_monitor import HealthMonitor
 from child_processes import ChildProcesses, parent_lifetime
 from camera_key import load_encryption_key
 from window_positions import reset_positions
+from camera_session import SessionEntry, SessionWorkspace
 
 # Keep the installation key outside the published source files.
 ENCRYPTION_KEY = load_encryption_key(os.path.dirname(__file__))
@@ -78,6 +79,16 @@ class CameraViewer:
         self.reset_after = None
         self.playback_window = None
         self.playback_icons = None
+        self.session = SessionWorkspace()
+        self.session_windows = {}
+        self.saved_session = None
+        self.session_restored = False
+        self.restore_task = None
+        self.session_after = None
+        self.session_final = None
+        self.children.close_guards.append(
+            lambda: self.session_final is None or self.session_final.done())
+        self.root.bind('<Destroy>', self._session_destroyed, add='+')
         self.children.close_guards.append(lambda: self.playback_window is None)
         parent_lifetime.bind(root, self.on_closing)
         
@@ -122,12 +133,22 @@ class CameraViewer:
                                      cursor="hand2")
         self.manage_button.grid(row=0, column=0)
         self.reset_positions_button = tk.Button(button_frame,
-            text="Réinitialiser la position des fenêtres", cursor="hand2",
+            text="Reset Window Positions", cursor="hand2",
             command=self.reset_window_positions)
         self.reset_positions_button.grid(row=1, column=0, pady=(5, 0))
         self.playback_button = IconButton(button_frame, 'archives', self.open_playback,
             self.playback_icons, self.playback_help, label=True)
         self.playback_button.grid(row=2, column=0, pady=(5, 0))
+        self.restore_button = tk.Button(button_frame, text='Restore All',
+            cursor='hand2', command=self.restore_session, state=tk.DISABLED)
+        self.restore_button.grid(row=3, column=0, pady=(5, 0))
+        self.playback_help.bind(self.restore_button,
+            'Reopens video and PTZ windows from your last session, including '
+            'their layout and video mute settings.')
+        self.session_detail = tk.Label(main_frame, text='', anchor='w', wraplength=450)
+        self.session_detail.grid(row=3, column=0, sticky='ew', padx=8, pady=(0, 5))
+        self.session_detail.grid_remove()
+        self.session_after = self.root.after(50, self._poll_session)
         
         self.root.bind('<Up>', self.navigate_up)
         self.root.bind('<Down>', self.navigate_down)
@@ -147,7 +168,7 @@ class CameraViewer:
         self.camera_list.delete("1.0", tk.END)
         cameras = get_cameras()
         for camera in cameras:
-            self.camera_list.insert(tk.END, f"Camera : {camera[0]} ")
+            self.camera_list.insert(tk.END, f"Camera {camera[0]} ")
             
             button_frame = tk.Frame(self.camera_list, highlightthickness=0, bd=0, bg=self.camera_list.cget('bg'))
             button_frame.configure(pady=5, padx=5)
@@ -177,7 +198,7 @@ class CameraViewer:
             from playback.widgets import IconButton
             archive_button = IconButton(button_frame, 'archives',
                 lambda c=camera: self.open_playback(c[0]), self.playback_icons, self.playback_help,
-                tip='Ouvrir les enregistrements de cette caméra')
+                tip='Open recordings for this camera')
             archive_button.pack(side=tk.LEFT, padx=2)
             
             self.camera_list.window_create("end", window=button_frame)
@@ -252,29 +273,146 @@ class CameraViewer:
             focused_widget.invoke()
 
     def play_camera_thread(self, camera):
-        decrypted_password = cipher.decrypt(camera[3]).decode()
-        python_exe = get_current_python()  # Keep the Viewer's dependency environment.
-        if not python_exe:
-            messagebox.showerror("Error", "Python interpreter unavailable")
-            return
-            
-        self.children.spawn([python_exe,
-                                  os.path.join(os.path.dirname(__file__), 'player_vilkin_hikvision.py'),
-                                  '--',  # Credentials beginning with '-' are still positional values.
-                                  str(camera[0]),
-                                  camera[1],
-                                  camera[2],
-                                  decrypted_password], relay_output=True)
+        self._open_session_window(camera, 'video')
 
     def play_ptz_thread(self, camera):
-        python_exe = get_current_python()
-        if not python_exe:
-            messagebox.showerror("Error", "Python interpreter unavailable")
+        self._open_session_window(camera, 'ptz')
+
+    def _session_message(self, text=''):
+        self.session_detail.config(text=text)
+        if text:
+            self.session_detail.grid()
+        else:
+            self.session_detail.grid_remove()
+
+    def _open_session_window(self, camera, kind, saved=None):
+        if self.children.closing:
             return
-        decrypted_password = cipher.decrypt(camera[3]).decode()
-        self.children.spawn([python_exe,
-                          os.path.join(os.path.dirname(__file__), 'ptz_keyboard_control.py'),
-                          str(camera[0]), camera[1], camera[2], decrypted_password])
+        used = {h['entry'].slot for h in self.session_windows.values()
+                if h['entry'].camera_id == str(camera[0]) and h['entry'].kind == kind}
+        slot = saved.slot if saved is not None and saved.slot not in used else next(
+            (n for n in range(1000) if n not in used), None)
+        if slot is None:
+            self._session_message('Too many windows for this camera.')
+            return
+        entry = SessionEntry.create(camera[0], kind, slot, saved.muted if saved else False)
+        # Reserve before any asynchronous work, including a second restore click.
+        self.session_windows[entry.window_id] = {
+            'entry': entry, 'camera': camera, 'process': None,
+            'pending': self.session.open(entry, restore=saved is not None)}
+
+    def _launch_session_window(self, handle):
+        entry, camera = handle['entry'], handle['camera']
+        environment = entry.environment(self.session.owner)
+        try:
+            entry = handle['pending'].result()
+            environment = entry.environment(self.session.owner)
+        except Exception:
+            # Storage failure must not disable ordinary viewing or PTZ.
+            self._session_message('Unable to save the session.')
+        handle['entry'], handle['pending'] = entry, None
+        script = 'player_vilkin_hikvision.py' if entry.kind == 'video' else 'ptz_keyboard_control.py'
+        try:
+            command = [get_current_python(), os.path.join(os.path.dirname(__file__), script)]
+            if entry.kind == 'video':
+                command.append('--')
+            command.extend([str(camera[0]), camera[1], camera[2], cipher.decrypt(camera[3]).decode()])
+            handle['process'] = self.children.spawn(command, relay_output=entry.kind == 'video',
+                                                    env_overrides=environment)
+            if handle['process'] is None:
+                raise OSError('Window not started')
+        except Exception:
+            self.session_windows.pop(entry.window_id, None)
+            self._session_message(f'Camera {entry.camera_id}: unable to open window.')
+        finally:
+            # Do not retain decrypted database tuples in the session registry.
+            handle.pop('camera', None)
+
+    def _reap_session_windows(self):
+        for window_id, handle in list(self.session_windows.items()):
+            process = handle['process']
+            if process is None or process.poll() is None:
+                continue
+            self.session_windows.pop(window_id, None)
+            if process.returncode == 0:
+                self.session.remove(handle['entry'])
+            else:
+                entry = handle['entry']
+                self._session_message(f'Camera {entry.camera_id}: window stopped.')
+
+    def _poll_session(self):
+        self.session_after = None
+        if self.children.closing:
+            return
+        if self.saved_session is None and self.session.loaded.done():
+            try:
+                self.saved_session = self.session.loaded.result()
+            except Exception:
+                self.saved_session = []
+                self._session_message('Unable to load the session.')
+            self.restore_button.config(state=tk.NORMAL)
+        self._reap_session_windows()
+        for handle in list(self.session_windows.values()):
+            if handle['pending'] is not None and handle['pending'].done():
+                self._launch_session_window(handle)
+        if self.restore_task is not None and self.restore_task.done():
+            task, self.restore_task = self.restore_task, None
+            self.restore_button.config(state=tk.NORMAL)
+            try:
+                entries = task.result()
+            except Exception:
+                self._session_message('Unable to load the session.')
+            else:
+                self._restore_entries(entries)
+        self.session_after = self.root.after(100, self._poll_session)
+
+    def restore_session(self):
+        if self.children.closing or self.saved_session is None or self.restore_task is not None:
+            return
+        self._session_message()
+        self._reap_session_windows()
+        if not self.session_restored and self.saved_session:
+            self._restore_entries(self.saved_session)
+        else:
+            self.restore_button.config(state=tk.DISABLED)
+            self.restore_task = self.session.load()
+
+    def _restore_entries(self, entries):
+        self.session_restored = True
+        if not entries:
+            self._session_message('No session to restore.')
+            return
+        try:
+            cameras = {str(c[0]): c for c in get_cameras()}
+        except Exception:
+            self._session_message('Unable to load the camera list.')
+            self.session_restored = False
+            return
+        available = {}
+        for handle in self.session_windows.values():
+            entry = handle['entry']
+            available.setdefault((entry.camera_id, entry.kind), []).append(entry)
+        missing = 0
+        for entry in entries:
+            camera = cameras.get(entry.camera_id)
+            if camera is None or (entry.kind == 'ptz' and camera[4] != 1):
+                missing += 1
+                continue
+            matches = available.get((entry.camera_id, entry.kind), [])
+            if matches:
+                # Match an instance's slot first; existing audio/layout stays untouched.
+                match = next((e for e in matches if e.slot == entry.slot), matches[0])
+                matches.remove(match)
+            else:
+                self._open_session_window(camera, entry.kind, entry)
+        self._session_message(f'{missing} camera(s) unavailable.' if missing else '')
+
+    def _session_destroyed(self, event):
+        if event.widget is self.root:
+            if self.session_after is not None:
+                self.root.after_cancel(self.session_after)
+                self.session_after = None
+            self.session.shutdown()
 
     def open_camera_manager(self):
         manager_path = os.path.join(os.path.dirname(__file__), 'camera_manager.py')
@@ -310,10 +448,18 @@ class CameraViewer:
         self.reset_task = None
         self.reset_positions_button.config(state=tk.NORMAL)
         if not success:
-            messagebox.showwarning("Position des fenêtres",
-                "Impossible de réinitialiser les positions enregistrées. Réessayez.")
+            messagebox.showwarning("Window Positions",
+                "Unable to reset saved window positions. Please try again.")
 
     def on_closing(self):
+        if self.children.closing:
+            return
+        if self.session_after is not None:
+            self.root.after_cancel(self.session_after)
+            self.session_after = None
+        # Freeze before the automatic child closures can remove membership.
+        # Children also distinguish parent EOF from their own close button.
+        self.session_final = self.session.freeze()
         if hasattr(self, 'playback_help'):
             self.playback_help.hide()
         if self.playback_window is not None:
@@ -330,7 +476,7 @@ if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
     root = tk.Tk()
-    root.title("Camera Viewer - v0.2.11-dev")
-    root.geometry("470x345")
+    root.title("Camera Viewer - v0.2.11")
+    root.geometry("470x390")
     app = CameraViewer(root)
     root.mainloop()

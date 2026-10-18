@@ -1,5 +1,6 @@
 """Graceful parent/child shutdown, including a real process tree and Tk PTZ."""
 import io
+import gc
 import importlib
 import json
 import os
@@ -229,6 +230,13 @@ class WindowOwnershipTests(unittest.TestCase):
                 app.play_ptz_thread(camera)
                 if with_manager:
                     app.open_camera_manager()
+                # Session registration is off Tk; pump until both reserved
+                # windows launch, with the Popen boundary still intercepted.
+                if hasattr(app, 'session'):
+                    deadline = time.monotonic() + 5
+                    while len(processes) < 3 and time.monotonic() < deadline:
+                        root.update()
+                        time.sleep(.01)
             self.assertEqual(len(app.children.processes), 3 if with_manager else 2)
             app.on_closing()
             for process in processes:
@@ -236,6 +244,9 @@ class WindowOwnershipTests(unittest.TestCase):
                 process.kill.assert_not_called()
         finally:
             root.destroy()
+            if hasattr(app, 'session'):
+                app.session.pool.shutdown(wait=True)
+            gc.collect()
 
     def test_viewer_closes_video_ptz_and_manager(self):
         self.check_window(self.viewer, self.viewer.CameraViewer, True)

@@ -69,11 +69,13 @@ class ChildProcesses:
                 self._close_pipe(process)
         self.processes = alive
 
-    def spawn(self, command, *, relay_output=False):
+    def spawn(self, command, *, relay_output=False, env_overrides=None):
         if self.closing:
             return None
         self._reap()
         env = os.environ.copy()
+        if env_overrides:
+            env.update(env_overrides)
         env[PARENT_PIPE_ENV] = '1'
         if relay_output:
             env['PYTHONUNBUFFERED'] = '1'

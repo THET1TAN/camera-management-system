@@ -2,16 +2,19 @@
 
 Released as **v0.2.10**, with the changes from
 [PR #13](https://github.com/THET1TAN/camera-management-system/pull/13) for issue #6,
-based on v0.2.9. The root sources and `~v0.2.10` contain this release;
-earlier source snapshots remain unchanged.
+based on v0.2.9. `~v0.2.10` preserves that release. The v0.2.11 main sources
+extend placement to PTZ and individual Viewer session instances; see the
+[session guide](session-restore.md). Earlier source snapshots remain unchanged.
 
 ## Use
 
 - Move or resize a video window and close it. Opening the same camera restores its position and size,
   including after exiting and restarting Camera Viewer.
 - Positions belong to the camera's database ID, not its address or credentials.
-  Different cameras keep separate positions and sizes. If several windows show the same
-  camera, the last recorded move or resize wins.
+  Different cameras keep separate positions and sizes. Standalone windows for
+  the same camera share the last recorded move or resize. In v0.2.11, windows
+  launched by Camera Viewer keep separate session-instance layouts, falling back
+  to the legacy camera layout when an instance has no saved position.
 - The layout includes each monitor's identity, bounds, usable work area and
   primary-screen status. Enumeration order does not matter. Negative coordinates
   on left/upper screens are supported.
@@ -36,7 +39,7 @@ earlier source snapshots remain unchanged.
   still applies and is fitted to the work area. Snap groups and maximized/minimized
   state are not persisted; reopening uses the last recorded normal-window geometry.
 
-Choose **Réinitialiser la position des fenêtres** below **Manage Cameras**.
+Choose **Reset Window Positions** below **Manage Cameras**.
 All recorded video positions and sizes are cleared and open players return to default positions,
 normally within 350 ms (250 ms background poll plus 100 ms Tk poll). Minimized
 or maximized players return to normal windows for reset or a topology change.
@@ -44,7 +47,8 @@ Open players keep their current size, reduced if necessary to fit the work area.
 New openings use defaults until the user moves or resizes a window again. Default placement
 and a subsequent close do not recreate the deleted records. The action applies
 to video players from this installation, including standalone players or players
-opened through Camera Manager. It does not reposition PTZ or Manager windows.
+opened through Camera Manager. In v0.2.11, PTZ controllers also participate in
+placement and reset; Manager windows are not repositioned.
 
 ## Local storage and failure handling
 

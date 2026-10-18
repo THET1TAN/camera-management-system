@@ -86,7 +86,8 @@ class PlaybackWindow:
         self._timeline()
         self.notice = label(self.window, TEXT['development_notice'],
                             secondary=True, anchor='w')
-        self.notice.grid(row=2, column=0, sticky='ew', padx=16, pady=(0,5))
+        if TEXT['development_notice']:
+            self.notice.grid(row=2, column=0, sticky='ew', padx=16, pady=(0,5))
         self.window.bind('<Configure>', self._configure, add='+')
         self.window.bind('<F8>', self._observed_frame, add='+')
         self.start_timer = self.window.after_idle(self._start)

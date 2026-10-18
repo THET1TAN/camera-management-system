@@ -218,10 +218,13 @@ def reset_positions(path=None):
 class PlacementWorker:
     INTERVAL = 0.25
 
-    def __init__(self, camera_id, fallback, *, path=None, screen_provider=windows_screens):
+    def __init__(self, camera_id, fallback, *, path=None, screen_provider=windows_screens,
+                 fallback_id=None, mirror_id=None):
         self.camera_id = str(camera_id)
         self.fallback = fallback
         self.store = PositionStore(path)
+        self.fallback_id = fallback_id
+        self.mirror_id = mirror_id
         self.screen_provider = screen_provider
         self.updates = queue.SimpleQueue()
         self.closed = threading.Event()
@@ -253,6 +256,10 @@ class PlacementWorker:
                 signature = screens_signature(screens)
                 try:
                     generation, row = self.store.read(self.camera_id)
+                    if token is None and row is None and self.fallback_id is not None:
+                        fallback_generation, fallback_row = self.store.read(self.fallback_id)
+                        if fallback_generation == generation:
+                            row = fallback_row
                 except (OSError, sqlite3.Error):
                     generation, row = (token[0] if token else None), None
                 new_token = (generation, signature)
@@ -266,6 +273,8 @@ class PlacementWorker:
                 if pending and pending[0] == token and generation is not None:
                     try:
                         self.store.save(self.camera_id, generation, signature, *pending[1])
+                        if self.mirror_id is not None:
+                            self.store.save(self.mirror_id, generation, signature, *pending[1])
                     except (OSError, sqlite3.Error):
                         # Retain the latest sample for a later attempt; never block Tk.
                         with self.lock:
@@ -281,12 +290,15 @@ class PlacementWorker:
 
 class WindowPlacement:
     """Sample normal window geometry on Tk, hand only values to the worker."""
-    def __init__(self, root, camera_id, *, path=None, screen_provider=windows_screens):
+    def __init__(self, root, camera_id, *, path=None, screen_provider=windows_screens,
+                 storage_id=None, fallback_id=None, mirror_id=None):
         self.root = root
         self.camera_id = str(camera_id)
         fallback = (Screen('primary', (0, 0, root.winfo_screenwidth(), root.winfo_screenheight()),
                            (0, 0, root.winfo_screenwidth(), root.winfo_screenheight()), True),)
-        self.worker = PlacementWorker(camera_id, fallback, path=path, screen_provider=screen_provider)
+        self.worker = PlacementWorker(storage_id or camera_id, fallback, path=path,
+                                      screen_provider=screen_provider,
+                                      fallback_id=fallback_id, mirror_id=mirror_id)
         self.token = None
         self.screens = fallback
         self.last = self._geometry()

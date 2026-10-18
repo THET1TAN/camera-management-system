@@ -53,7 +53,7 @@ class Transport:
         self.session = requests.Session()
         self.session.trust_env = False
         self.session.auth = HTTPDigestAuth(camera.username, camera.password)
-        self.session.headers.update({'Accept-Encoding': 'identity', 'User-Agent': 'CameraPlayback/0.2.11-dev'})
+        self.session.headers.update({'Accept-Encoding': 'identity', 'User-Agent': 'CameraPlayback/0.2.11'})
 
     def close(self):
         self.session.close()

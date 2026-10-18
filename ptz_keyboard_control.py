@@ -8,6 +8,8 @@ from ptz_command_worker import ControlState, PTZCommandWorker, select_move_timeo
 from child_processes import parent_lifetime
 from ptz_diagnostics import PTZDiagnostics, install_wire_trace
 from ptz_velocity import VelocitySpaces
+from camera_session import SessionWindow
+from window_positions import WindowPlacement
 
 VERSION = "0.2.7"
 REVISION = 9
@@ -18,6 +20,8 @@ closing = False
 window_active = False
 preset_request = None
 preset_sequence = 0
+session_window = None
+placement = None
 
 speed = 0.5
 min_speed = 0.1
@@ -166,6 +170,10 @@ def close_controller():
     if closing:
         return
     closing = True
+    if placement is not None:
+        placement.close()
+    if session_window is not None:
+        session_window.close(preserve=parent_lifetime.closed.is_set())
     root.withdraw()
     keyboard.clear()
     command_worker.close()
@@ -173,7 +181,8 @@ def close_controller():
 
 
 def finish_close():
-    if command_worker.is_alive():
+    if (command_worker.is_alive() or (placement is not None and not placement.finished())
+            or (session_window is not None and not session_window.finished())):
         root.after(KEY_POLL_INTERVAL_MS, finish_close)
     else:
         root.quit()
@@ -216,11 +225,14 @@ class PTZController:
 def main(argv=None):
     global root, command_worker, speed_value_label, speed_progress, key_is_down
     global closing, window_active, preset_request
+    global session_window, placement
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 4:
         print("Usage: ptz_keyboard_control.py camera_id ip username password")
         return 1
     camera_id, camera_ip, username, password = argv
+    session_window = SessionWindow.from_environment(camera_id, 'ptz')
+    placement = None
     from onvif import ONVIFCamera
     try:
         camera = ONVIFCamera(camera_ip, 80, username, password)
@@ -250,8 +262,10 @@ def main(argv=None):
             # C failed physical partial releases. A stale terminal setting must
             # not reactivate overlapping requests; return to sequential B.
             neutral_transitions, conservative_stops = True, False
-    except Exception as e:
-        print(f"Error connecting to camera: {e}")
+    except Exception:
+        print('Error connecting to camera (private details omitted).')
+        if session_window is not None:
+            session_window.close(preserve=True)
         return 1
 
     key_is_down = create_key_state_reader()
@@ -313,6 +327,10 @@ def main(argv=None):
     speed_progress.pack(side=tk.LEFT, padx=10, pady=10)
     speed_progress['value'] = (speed - min_speed) / (max_speed - min_speed) * 100
 
+    root.update_idletasks()
+    placement = WindowPlacement(root, f'ptz:{camera_id}',
+        storage_id=session_window.entry.placement_key if session_window is not None else None)
+
     root.bind("<KeyPress>", on_key_press)
     root.bind("<KeyRelease>", on_key_release)
 
@@ -324,6 +342,9 @@ def main(argv=None):
     try:
         root.mainloop()
     finally:
+        placement.close()
+        if session_window is not None:
+            session_window.close(preserve=parent_lifetime.closed.is_set())
         command_worker.close()
         command_worker.join(timeout=8)
         if command_worker.is_alive() or 'not confirmed' in command_worker.status:
