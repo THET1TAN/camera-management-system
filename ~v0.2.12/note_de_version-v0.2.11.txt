@@ -1,0 +1,49 @@
+Camera Management System — v0.2.11
+Date: October 17, 2026
+Session restoration: issue #18
+Included archive work: PR #16 / issue #15
+
+Changes
+-------
+- Restore All reopens the previous Viewer's video and PTZ windows, preserving
+  each instance's layout and each video's mute setting. Already open windows
+  are reused; repeated clicks do not create unwanted duplicates.
+- Global Viewer shutdown preserves the session. Manual child closure removes
+  that window. Failed windows can be retried without blocking other cameras.
+- Muted live-video buttons use a soft red background. Initial mute reaches the
+  supervisor before its thread starts, and is requested before native playback.
+- PTZ controllers participate in saved placement and visible-screen recovery.
+  Restoration sends no movement, zoom, focus, home-position or preset request.
+- Position reset preserves session membership and mute preferences.
+- Application controls, tooltips, messages and launch output use English.
+  Restore help is a tooltip; successful restoration adds no persistent summary.
+- The existing integrated Recordings implementation is included in main, with
+  its timeline, progressive preparation, original/interval export and cache tools.
+
+Installation and local data
+---------------------------
+The root sources are the main application. Launch Lancer-Camera.cmd, or use
+the same Python interpreter and dependencies to run camera_viewer.py.
+Lancer-test-issue-18.cmd remains a shortcut to the main launcher.
+The matching source snapshot is preserved in ~v0.2.11; older snapshots are unchanged.
+No rebuilt executable is supplied. The PTZ controller retains its independent
+v0.2.7 r9 B behavior identifier.
+
+Session tables extend camera_window_positions.db without changing camera IDs
+or credentials. Private databases, keys, configuration, logs, cache, exports
+and incident media are excluded from the public sources and version snapshot.
+
+Validation and remaining limits
+-------------------------------
+Automated coverage verifies session persistence, independent instances, audio
+initialization, repeated restoration, missing cameras, PTZ neutrality, reset
+isolation, child shutdown, existing player recovery and offline archive behavior.
+The publication checkout passed 446 tests on Windows / Python 3.14 in 116.756 s.
+The session and English-interface revision also passed 38 tests on Python 3.9.13.
+See docs/session-restore.md for the release verification results and manual steps.
+
+Actual speaker output, physical monitor changes and camera compatibility still
+require field testing. Some libVLC audio outputs do not support pre-play mute
+or digital-passthrough muting. Windows Snap groups and maximized/minimized state
+are not persisted. Recordings' CGI archive-boundary jump and actual scrubbing
+cadence remain unresolved under issue #15; publication does not claim fixes.

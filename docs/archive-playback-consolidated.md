@@ -194,8 +194,8 @@ ces protections qu'après conservation/qualification explicite des preuves.
 Préparer l'environnement PowerShell puis exécuter les 114 tests Playback :
 
 ```powershell
-$Python = 'C:\Users\thetitan.TITANDARK\AppData\Local\Programs\Python\Python39\python.exe'
-Set-Location -LiteralPath 'C:\Users\thetitan.TITANDARK\OneDrive\Documents\Informatique\Projet\Camera'
+# Ouvrir PowerShell dans le dossier Camera du projet.
+$Python = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python39\python.exe'
 & $Python -m unittest discover -s tests -p 'test_playback*.py' -v
 ```
 

@@ -1,18 +1,36 @@
 # Camera Management System
 
-## Local security update — Windows user-bound credentials
+## Current release: v0.2.12 — Windows user-bound credentials
 
-The main sources now protect the camera encryption key with Windows DPAPI under
-the current user. Credentials, settings, layout and new diagnostics use
-`%LOCALAPPDATA%\CameraManagementSystem`, outside the source checkout. Close all
-older application windows before first startup. Existing encrypted credentials
-are verified and re-encrypted with a new random key; the source folder's database
-and raw key are retired only after the protected store has been checked. Archived version folders are
-unchanged. See [credential protection and migration](docs/windows-credentials.md).
+Released October 18, 2026. The main sources and [`~v0.2.12`](./~v0.2.12) contain
+this version. Earlier source snapshots remain unchanged.
 
-## Current release: v0.2.11 — session restoration and English interface
+- **Windows user-bound key:** a new random key encrypts the camera credentials;
+  Windows DPAPI protects that key for the current user. Simple copying of the
+  database and key file does not transfer access to another profile or PC.
+- **Verified migration:** encrypted credentials are checked and re-encrypted
+  before the old source database and raw key are retired. A DPAPI-protected
+  local recovery copy is retained. Updates under the same Windows profile keep
+  working; a fresh PC/profile requires the camera credentials to be entered again.
+- **Private process commands:** video and PTZ windows receive only a camera ID,
+  then read credentials locally. Legacy commands containing passwords are rejected.
+- **Local data:** credentials, settings, window/session layout and new diagnostics
+  use `%LOCALAPPDATA%\CameraManagementSystem`, outside the source checkout.
+  Existing archive cache metadata remains readable after key rotation.
+- **Restore All included:** the v0.2.11 restoration, independent window layouts,
+  saved mute settings and English interface remain part of this release.
 
-The main application and [`~v0.2.11`](./~v0.2.11) contain this version, promoted
+Close all older application windows before upgrading and start `Lancer-Camera.cmd`.
+See the [security and migration guide](docs/windows-credentials.md),
+[session guide](docs/session-restore.md) and
+[v0.2.12 release notes](note_de_version-v0.2.12.txt). This is a source release;
+no rebuilt executable is included. Private databases, keys, settings, logs and
+media are excluded from the public sources and snapshot. Old backups and cloud
+version history are not erased by migration.
+
+## Previous release: v0.2.11 — session restoration and English interface
+
+The preserved [`~v0.2.11`](./~v0.2.11) contains this version, promoted
 on October 17, 2026. Previous source snapshots, including `~v0.2.10`, are preserved.
 
 - **Restore All:** reopen the previous Viewer's video and PTZ windows with their
@@ -274,16 +292,28 @@ transport. Use a network appropriate for your camera's connection settings.
 
 ## Diagnostics and tests
 
-The PTZ controller writes a local `ptz_control_<process-id>.log`, bounded to
+The PTZ controller writes `ptz-logs/ptz_control_<process-id>.log` under the local
+application data directory, bounded to
 256 KiB plus one archive. It records requested axes, serialized velocity fields,
 requested movement duration and request results. It does not record camera
 addresses, credentials, profile tokens or SOAP payloads. Diagnostics do not add
 text to the PTZ interface, and a log failure cannot prevent Stop.
 
 ```powershell
+$env:CAMERA_DATA_DIRECTORY = Join-Path $env:TEMP ('camera-profile-tests-' + [guid]::NewGuid())
 $env:CAMERA_WINDOW_POSITIONS_FILE = Join-Path $env:TEMP ('camera-layout-tests-' + [guid]::NewGuid() + '.db')
 python -m unittest discover -s tests
 ```
+
+The v0.2.12 security implementation passed **465 tests** on Windows / Python
+3.9.13 in 148.582 seconds. These include actual DPAPI round trips, key rotation,
+strict decryption, interrupted/concurrent migration, preservation of existing
+archive metadata, password-free process commands and the existing Restore All
+coverage. Tests use disposable synthetic credentials and isolated profile/layout
+paths. The running local installation was migrated and its previous video
+windows resumed; this does not establish universal camera or audio compatibility.
+The matching `~v0.2.12` publication snapshot independently passed the same 465-test
+suite on Windows / Python 3.9.13 in 147.389 seconds.
 
 The v0.2.11 publication checkout has **446 passing tests** on Windows / Python
 3.14, completed in 116.756 seconds. Session and English-interface checks also
@@ -309,7 +339,8 @@ playback settings are recorded separately in the validation report.
 Joël also reported recovery during a physical-camera test; the exact cause of
 that camera's prior missing bitrate still requires a targeted repeat.
 
-Player diagnostics are retained in bounded files under `player-logs/` and relayed
+Player diagnostics are retained in bounded files under
+`%LOCALAPPDATA%\CameraManagementSystem\player-logs` and relayed
 to the launch terminal without authenticated URIs or private SOAP payloads.
 See the recovery guide for the local synthetic test command and log options.
 H.265/H.265+, UDP, audible sound recovery, actual GPU removal and packaged-EXE
@@ -334,10 +365,16 @@ universal camera compatibility. Archived C simulations do not validate C physica
 | `ptz_command_worker.py` | Latest-state ONVIF commands and stops |
 | `ptz_velocity.py` | Advertised velocity spaces and speed scaling |
 | `child_processes.py` | Cascading lifetime of child processes |
-| `camera_key.py` | Local encryption key loading |
+| `camera_key.py` | Windows-protected key storage and strict loading |
+| `camera_credentials.py` | Verified credential migration, re-encryption and local readers |
+| `camera_paths.py` | Local profile storage paths |
+| `windows_security.py` | User-scoped DPAPI and private Windows permissions |
+| `camera_session.py` | Restore All membership, independent window instances and mute persistence |
 | `ptz_diagnostics.py` | Bounded command and serialized-velocity logs |
 | `tests/` | Automated regression tests |
-| `~v0.2.10/` | Source snapshot matching the current release with remembered window layout |
+| `~v0.2.12/` | Current source snapshot with user-bound credentials and Restore All |
+| `~v0.2.11/` | Preserved previous release with session restoration and English interface |
+| `~v0.2.10/` | Preserved previous release with remembered window layout |
 | `~v0.2.9/` | Preserved previous release with nonblocking RTSP recovery |
 | `~v0.2.8/` | Preserved previous release with camera availability |
 | `~v0.2.7/` | Preserved previous release with PTZ r9 B |

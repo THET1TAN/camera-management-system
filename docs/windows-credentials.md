@@ -1,7 +1,8 @@
 # Windows user-bound camera credentials
 
-This local update applies to the main v0.2.11 sources. Archived `~v*` snapshots
-remain unchanged and are no longer the launch target after migration.
+This protection is included in the main v0.2.12 sources and the matching
+`~v0.2.12` snapshot. Earlier `~v*` snapshots remain unchanged; use the current
+main sources after migration.
 
 ## Daily use and storage
 
@@ -88,6 +89,7 @@ References: [Microsoft DPAPI](https://learn.microsoft.com/en-us/windows/win32/ap
 
 Use an isolated `CAMERA_DATA_DIRECTORY` and `CAMERA_WINDOW_POSITIONS_FILE`, then run
 `python -m unittest discover -s tests -v` on Windows with the application interpreter.
+The implementation passed 465 tests on Windows / Python 3.9.13 in 148.582 seconds.
 The suite uses generated credentials and temporary databases. DPAPI/ACL tests must
 run as a normal Windows user process, because an AppContainer sandbox does not have
 the permissions of that user's ordinary desktop applications. These checks cover

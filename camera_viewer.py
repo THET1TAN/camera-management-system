@@ -478,7 +478,7 @@ if __name__ == "__main__":
             'Camera credentials may need to be entered again.')
         root.destroy()
         sys.exit(1)
-    root.title("Camera Viewer - v0.2.11")
+    root.title("Camera Viewer - v0.2.12")
     root.geometry("470x390")
     app = CameraViewer(root)
     root.mainloop()

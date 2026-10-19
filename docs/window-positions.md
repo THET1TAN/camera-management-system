@@ -1,5 +1,9 @@
 # Camera window positions and sizes — issue #6
 
+In v0.2.12, active layout and session data are stored in
+`%LOCALAPPDATA%\CameraManagementSystem\camera_window_positions.db`. Existing data
+is preserved during the [Windows-profile migration](windows-credentials.md).
+
 Released as **v0.2.10**, with the changes from
 [PR #13](https://github.com/THET1TAN/camera-management-system/pull/13) for issue #6,
 based on v0.2.9. `~v0.2.10` preserves that release. The v0.2.11 main sources

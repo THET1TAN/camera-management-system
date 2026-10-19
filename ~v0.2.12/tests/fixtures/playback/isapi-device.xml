@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='utf-8'?>
+<DeviceInfo xmlns="http://www.std-cgi.com/ver20/XMLSchema" version="2.0">
+<deviceName>synthetic</deviceName>
+<deviceID>synthetic</deviceID>
+<deviceDescription>synthetic</deviceDescription>
+<deviceLocation>synthetic</deviceLocation>
+<systemContact>synthetic</systemContact>
+<model>synthetic</model>
+<serialNumber>synthetic</serialNumber>
+<macAddress>synthetic</macAddress>
+<firmwareVersion>synthetic</firmwareVersion>
+<firmwareReleasedDate>synthetic</firmwareReleasedDate>
+<encoderVersion>synthetic</encoderVersion>
+<encoderReleasedDate>synthetic</encoderReleasedDate>
+<bootVersion>synthetic</bootVersion>
+<bootReleasedDate>synthetic</bootReleasedDate>
+<hardwareVersion>synthetic</hardwareVersion>
+<deviceType>synthetic</deviceType>
+<telecontrolID>synthetic</telecontrolID>
+<supportBeep>synthetic</supportBeep>
+<supportVideoLoss>synthetic</supportVideoLoss>
+<firmwareVersionInfo>synthetic</firmwareVersionInfo>
+<manufacturer />
+<subSerialNumber>synthetic</subSerialNumber>
+<OEMCode>synthetic</OEMCode>
+<customizedInfo>synthetic</customizedInfo>
+</DeviceInfo>

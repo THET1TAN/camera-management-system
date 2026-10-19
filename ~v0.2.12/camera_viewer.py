@@ -1,0 +1,484 @@
+import os
+import sqlite3
+from cryptography.fernet import Fernet
+import tkinter as tk
+from tkinter import messagebox
+import sys
+from camera_health import CameraTarget, load_overrides
+from camera_health_monitor import HealthMonitor
+from child_processes import ChildProcesses, parent_lifetime
+from camera_key import load_encryption_key
+from camera_credentials import application_store, decrypt_field
+from camera_paths import data_directory
+from windows_security import ProtectionError
+from window_positions import reset_positions
+from camera_session import SessionEntry, SessionWorkspace
+
+DB_FILE = None
+cipher = None
+
+
+def initialize_storage():
+    global DB_FILE, cipher
+    if cipher is None:
+        directory = application_store()
+        cipher = Fernet(load_encryption_key(directory, create=False))
+        DB_FILE = str(directory / 'camera_credentials.db')
+
+def get_current_python():
+    """Get the current Python executable path"""
+    return sys.executable
+
+def decrypt_data(encrypted_data):
+    return decrypt_field(cipher, encrypted_data)
+
+def get_cameras():
+    initialize_storage()
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, ip, username, password, ptz FROM cameras')
+    cameras = cursor.fetchall()
+    conn.close()
+    
+    decrypted_cameras = []
+    for camera in cameras:
+        try:
+            ip_data = camera[1].encode() if isinstance(camera[1], str) else camera[1]
+            username_data = camera[2].encode() if isinstance(camera[2], str) else camera[2]
+            password_data = camera[3].encode() if isinstance(camera[3], str) else camera[3]
+            decrypt_field(cipher, password_data)
+            
+            decrypted_camera = (
+                camera[0],
+                decrypt_data(ip_data),
+                decrypt_data(username_data),
+                password_data,
+                camera[4]
+            )
+            decrypted_cameras.append(decrypted_camera)
+        except Exception:
+            raise ProtectionError('Unable to read camera credentials. No data was changed.') from None
+    return decrypted_cameras
+
+class CameraViewer:
+    def __init__(self, root):
+        self.root = root
+        self.children = ChildProcesses(root)
+        self.health = None
+        self.health_widgets = {}
+        self.health_updates = {}
+        self.health_after = None
+        self.managers = []
+        self.reset_task = None
+        self.reset_after = None
+        self.playback_window = None
+        self.playback_icons = None
+        self.session = SessionWorkspace()
+        self.session_windows = {}
+        self.saved_session = None
+        self.session_restored = False
+        self.restore_task = None
+        self.session_after = None
+        self.session_final = None
+        self.children.close_guards.append(
+            lambda: self.session_final is None or self.session_final.done())
+        self.root.bind('<Destroy>', self._session_destroyed, add='+')
+        self.children.close_guards.append(lambda: self.playback_window is None)
+        parent_lifetime.bind(root, self.on_closing)
+        
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
+        main_frame = tk.Frame(root)
+        main_frame.grid(row=0, column=0, sticky="nsew")
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        list_frame = tk.Frame(main_frame)
+        list_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        list_frame.grid_rowconfigure(0, weight=1)
+        list_frame.grid_columnconfigure(0, weight=1)
+
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        self.camera_list = tk.Text(list_frame, height=10, state=tk.DISABLED,
+                                 yscrollcommand=scrollbar.set, 
+                                 cursor="arrow")
+        self.camera_list.grid(row=0, column=0, sticky="nsew")
+        scrollbar.config(command=self.camera_list.yview)
+
+        self.status_detail = tk.Label(main_frame, text='', height=1, anchor='w')
+        self.status_detail.grid(row=2, column=0, sticky='ew', padx=8, pady=(0, 5))
+        from playback.widgets import Icons, IconButton, Help
+        self.playback_icons = Icons(root)
+        # Tooltips do not replace the existing availability summary.
+        self.playback_help = Help(root, None)
+        self.load_cameras()
+        self.health_after = self.root.after(100, self._poll_health)
+        
+        # Ajout d'un frame pour le bouton en bas
+        button_frame = tk.Frame(main_frame)
+        button_frame.grid(row=1, column=0, pady=5)
+        button_frame.grid_columnconfigure(0, weight=1)
+        
+        self.manage_button = tk.Button(button_frame, text="Manage Cameras", 
+                                     command=self.open_camera_manager,
+                                     cursor="hand2")
+        self.manage_button.grid(row=0, column=0)
+        self.reset_positions_button = tk.Button(button_frame,
+            text="Reset Window Positions", cursor="hand2",
+            command=self.reset_window_positions)
+        self.reset_positions_button.grid(row=1, column=0, pady=(5, 0))
+        self.playback_button = IconButton(button_frame, 'archives', self.open_playback,
+            self.playback_icons, self.playback_help, label=True)
+        self.playback_button.grid(row=2, column=0, pady=(5, 0))
+        self.restore_button = tk.Button(button_frame, text='Restore All',
+            cursor='hand2', command=self.restore_session, state=tk.DISABLED)
+        self.restore_button.grid(row=3, column=0, pady=(5, 0))
+        self.playback_help.bind(self.restore_button,
+            'Reopens video and PTZ windows from your last session, including '
+            'their layout and video mute settings.')
+        self.session_detail = tk.Label(main_frame, text='', anchor='w', wraplength=450)
+        self.session_detail.grid(row=3, column=0, sticky='ew', padx=8, pady=(0, 5))
+        self.session_detail.grid_remove()
+        self.session_after = self.root.after(50, self._poll_session)
+        
+        self.root.bind('<Up>', self.navigate_up)
+        self.root.bind('<Down>', self.navigate_down)
+        self.root.bind('<Return>', self.activate_button)
+        
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def load_cameras(self):
+        if self.health is not None:
+            self.health.stdin.close()
+            self.health = None
+        self.health_widgets.clear()
+        self.health_updates.clear()
+        for widget in self.camera_list.winfo_children():
+            widget.destroy()
+        self.camera_list.config(state=tk.NORMAL)
+        self.camera_list.delete("1.0", tk.END)
+        cameras = get_cameras()
+        for camera in cameras:
+            self.camera_list.insert(tk.END, f"Camera {camera[0]} ")
+            
+            button_frame = tk.Frame(self.camera_list, highlightthickness=0, bd=0, bg=self.camera_list.cget('bg'))
+            button_frame.configure(pady=5, padx=5)
+
+            indicator = tk.Canvas(button_frame, width=16, height=16, highlightthickness=0,
+                                  bg=self.camera_list.cget('bg'))
+            dot = indicator.create_oval(3, 3, 13, 13, fill='#737373', outline='')
+            indicator.pack(side=tk.LEFT)
+            status = tk.Label(button_frame, text='Checking', width=10, anchor='w',
+                              bg=self.camera_list.cget('bg'), takefocus=True)
+            status.pack(side=tk.LEFT, padx=(0, 4))
+            self.health_widgets[camera[0]] = (indicator, dot, status)
+            
+            play_button = tk.Button(button_frame, text="Play", 
+                                  command=lambda c=camera: self.play_camera_thread(c),
+                                  cursor="hand2")
+            play_button.pack(side=tk.LEFT, padx=2)
+            
+            if camera[4] == 1:  # camera[4] = ptz
+                ptz_button = tk.Button(button_frame, text="PTZ",
+                                       command=lambda c=camera: self.play_ptz_thread(c),
+                                       cursor="hand2")
+                ptz_button.pack(side=tk.LEFT, padx=2)
+
+            # A compact shortcut opens the SAME archive window at this camera.
+            # Local import keeps Viewer startup independent of media dependencies.
+            from playback.widgets import IconButton
+            archive_button = IconButton(button_frame, 'archives',
+                lambda c=camera: self.open_playback(c[0]), self.playback_icons, self.playback_help,
+                tip='Open recordings for this camera')
+            archive_button.pack(side=tk.LEFT, padx=2)
+            
+            self.camera_list.window_create("end", window=button_frame)
+            self.camera_list.insert(tk.END, "\n")
+            
+        self.camera_list.config(state=tk.DISABLED)
+        self._refresh_health_summary()
+        if cameras:
+            try:
+                overrides = load_overrides(data_directory())
+                targets = [CameraTarget(c[0], c[1], c[2], cipher.decrypt(c[3]).decode(),
+                                        **overrides.get(str(c[0]), {})) for c in cameras]
+                self.health = HealthMonitor(targets)
+                self.children.processes.append(self.health)
+            except Exception:
+                # Keep controls usable and never include sensitive exception text.
+                self.status_detail.config(text='Availability checks unavailable.')
+                for _, _, status in self.health_widgets.values():
+                    status.config(text='Unknown')
+
+    def _refresh_health_summary(self):
+        counts = {}
+        for _, _, label in self.health_widgets.values():
+            state = label.cget('text').lower()
+            counts[state] = counts.get(state, 0) + 1
+        parts = [f'{counts[state]} {state}' for state in
+                 ('online', 'degraded', 'unreachable', 'checking', 'unknown') if counts.get(state)]
+        self.status_detail.config(text=' · '.join(parts) if parts else 'No cameras configured.')
+
+    def _poll_health(self):
+        self.health_after = None
+        if self.children.closing:
+            return
+        # Reap a replaced monitor even when the user has not launched a player.
+        self.children._reap()
+        if self.health is not None:
+            updates = self.health.updates()
+            for update in updates:
+                if update.camera_id not in self.health_widgets:
+                    continue
+                canvas, dot, label = self.health_widgets[update.camera_id]
+                color, title = {'online': ('#238636', 'Online'),
+                                'degraded': ('#b77900', 'Degraded'),
+                                'offline': ('#c62828', 'Unreachable'),
+                                'unknown': ('#737373', 'Unknown')}[update.state]
+                canvas.itemconfigure(dot, fill=color)
+                label.config(text=title)
+                self.health_updates[update.camera_id] = update
+            if updates:
+                self._refresh_health_summary()
+            if self.health.poll() is not None:
+                for canvas, dot, label in self.health_widgets.values():
+                    canvas.itemconfigure(dot, fill='#737373')
+                    label.config(text='Unknown')
+                self.health_updates.clear()
+                self.status_detail.config(text='Availability checks stopped. Reopen Viewer.')
+        closed_managers = [p for p in self.managers if p.poll() is not None]
+        if closed_managers:
+            self.managers = [p for p in self.managers if p not in closed_managers]
+            self.load_cameras()
+        self.health_after = self.root.after(100, self._poll_health)
+
+    def navigate_up(self, event):
+        self.camera_list.yview_scroll(-1, "units")
+
+    def navigate_down(self, event):
+        self.camera_list.yview_scroll(1, "units")
+
+    def activate_button(self, event):
+        focused_widget = self.root.focus_get()
+        if isinstance(focused_widget, tk.Button):
+            focused_widget.invoke()
+
+    def play_camera_thread(self, camera):
+        self._open_session_window(camera, 'video')
+
+    def play_ptz_thread(self, camera):
+        self._open_session_window(camera, 'ptz')
+
+    def _session_message(self, text=''):
+        self.session_detail.config(text=text)
+        if text:
+            self.session_detail.grid()
+        else:
+            self.session_detail.grid_remove()
+
+    def _open_session_window(self, camera, kind, saved=None):
+        if self.children.closing:
+            return
+        used = {h['entry'].slot for h in self.session_windows.values()
+                if h['entry'].camera_id == str(camera[0]) and h['entry'].kind == kind}
+        slot = saved.slot if saved is not None and saved.slot not in used else next(
+            (n for n in range(1000) if n not in used), None)
+        if slot is None:
+            self._session_message('Too many windows for this camera.')
+            return
+        entry = SessionEntry.create(camera[0], kind, slot, saved.muted if saved else False)
+        # Reserve before any asynchronous work, including a second restore click.
+        self.session_windows[entry.window_id] = {
+            'entry': entry, 'camera': camera, 'process': None,
+            'pending': self.session.open(entry, restore=saved is not None)}
+
+    def _launch_session_window(self, handle):
+        entry, camera = handle['entry'], handle['camera']
+        environment = entry.environment(self.session.owner)
+        try:
+            entry = handle['pending'].result()
+            environment = entry.environment(self.session.owner)
+        except Exception:
+            # Storage failure must not disable ordinary viewing or PTZ.
+            self._session_message('Unable to save the session.')
+        handle['entry'], handle['pending'] = entry, None
+        script = 'player_vilkin_hikvision.py' if entry.kind == 'video' else 'ptz_keyboard_control.py'
+        try:
+            command = [get_current_python(), os.path.join(os.path.dirname(__file__), script)]
+            command.extend(['--camera-id', str(camera[0])])
+            handle['process'] = self.children.spawn(command, relay_output=entry.kind == 'video',
+                                                    env_overrides=environment)
+            if handle['process'] is None:
+                raise OSError('Window not started')
+        except Exception:
+            self.session_windows.pop(entry.window_id, None)
+            self._session_message(f'Camera {entry.camera_id}: unable to open window.')
+        finally:
+            # Do not retain decrypted database tuples in the session registry.
+            handle.pop('camera', None)
+
+    def _reap_session_windows(self):
+        for window_id, handle in list(self.session_windows.items()):
+            process = handle['process']
+            if process is None or process.poll() is None:
+                continue
+            self.session_windows.pop(window_id, None)
+            if process.returncode == 0:
+                self.session.remove(handle['entry'])
+            else:
+                entry = handle['entry']
+                self._session_message(f'Camera {entry.camera_id}: window stopped.')
+
+    def _poll_session(self):
+        self.session_after = None
+        if self.children.closing:
+            return
+        if self.saved_session is None and self.session.loaded.done():
+            try:
+                self.saved_session = self.session.loaded.result()
+            except Exception:
+                self.saved_session = []
+                self._session_message('Unable to load the session.')
+            self.restore_button.config(state=tk.NORMAL)
+        self._reap_session_windows()
+        for handle in list(self.session_windows.values()):
+            if handle['pending'] is not None and handle['pending'].done():
+                self._launch_session_window(handle)
+        if self.restore_task is not None and self.restore_task.done():
+            task, self.restore_task = self.restore_task, None
+            self.restore_button.config(state=tk.NORMAL)
+            try:
+                entries = task.result()
+            except Exception:
+                self._session_message('Unable to load the session.')
+            else:
+                self._restore_entries(entries)
+        self.session_after = self.root.after(100, self._poll_session)
+
+    def restore_session(self):
+        if self.children.closing or self.saved_session is None or self.restore_task is not None:
+            return
+        self._session_message()
+        self._reap_session_windows()
+        if not self.session_restored and self.saved_session:
+            self._restore_entries(self.saved_session)
+        else:
+            self.restore_button.config(state=tk.DISABLED)
+            self.restore_task = self.session.load()
+
+    def _restore_entries(self, entries):
+        self.session_restored = True
+        if not entries:
+            self._session_message('No session to restore.')
+            return
+        try:
+            cameras = {str(c[0]): c for c in get_cameras()}
+        except Exception:
+            self._session_message('Unable to load the camera list.')
+            self.session_restored = False
+            return
+        available = {}
+        for handle in self.session_windows.values():
+            entry = handle['entry']
+            available.setdefault((entry.camera_id, entry.kind), []).append(entry)
+        missing = 0
+        for entry in entries:
+            camera = cameras.get(entry.camera_id)
+            if camera is None or (entry.kind == 'ptz' and camera[4] != 1):
+                missing += 1
+                continue
+            matches = available.get((entry.camera_id, entry.kind), [])
+            if matches:
+                # Match an instance's slot first; existing audio/layout stays untouched.
+                match = next((e for e in matches if e.slot == entry.slot), matches[0])
+                matches.remove(match)
+            else:
+                self._open_session_window(camera, entry.kind, entry)
+        self._session_message(f'{missing} camera(s) unavailable.' if missing else '')
+
+    def _session_destroyed(self, event):
+        if event.widget is self.root:
+            if self.session_after is not None:
+                self.root.after_cancel(self.session_after)
+                self.session_after = None
+            self.session.shutdown()
+
+    def open_camera_manager(self):
+        manager_path = os.path.join(os.path.dirname(__file__), 'camera_manager.py')
+        process = self.children.spawn([get_current_python(), manager_path])
+        if process is not None:
+            self.managers.append(process)
+
+    def open_playback(self, camera_id=None):
+        if self.children.closing:
+            return
+        if self.playback_window is not None:
+            if not self.playback_window.closing:
+                self.playback_window.focus_camera(camera_id)
+            return
+        from playback.ui import PlaybackWindow
+        def released():
+            self.playback_window = None
+        self.playback_window = PlaybackWindow(self.root, camera_id, on_closed=released)
+
+    def reset_window_positions(self):
+        if self.children.closing or self.reset_task is not None:
+            return
+        self.reset_positions_button.config(state=tk.DISABLED)
+        self.reset_task = reset_positions()
+        self.reset_after = self.root.after(50, self._poll_position_reset)
+
+    def _poll_position_reset(self):
+        self.reset_after = None
+        if not self.reset_task.done():
+            self.reset_after = self.root.after(50, self._poll_position_reset)
+            return
+        success = self.reset_task.result()
+        self.reset_task = None
+        self.reset_positions_button.config(state=tk.NORMAL)
+        if not success:
+            messagebox.showwarning("Window Positions",
+                "Unable to reset saved window positions. Please try again.")
+
+    def on_closing(self):
+        if self.children.closing:
+            return
+        if self.session_after is not None:
+            self.root.after_cancel(self.session_after)
+            self.session_after = None
+        # Freeze before the automatic child closures can remove membership.
+        # Children also distinguish parent EOF from their own close button.
+        self.session_final = self.session.freeze()
+        if hasattr(self, 'playback_help'):
+            self.playback_help.hide()
+        if self.playback_window is not None:
+            self.playback_window.close()
+        if self.reset_after is not None:
+            self.root.after_cancel(self.reset_after)
+            self.reset_after = None
+        if self.health_after is not None:
+            self.root.after_cancel(self.health_after)
+            self.health_after = None
+        self.children.close()
+
+if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+    root = tk.Tk()
+    try:
+        initialize_storage()
+    except (ProtectionError, OSError, sqlite3.Error):
+        root.withdraw()
+        messagebox.showerror('Camera Credentials',
+            'Unable to unlock camera credentials for this Windows profile. '
+            'Close other camera applications and check the local data directory. '
+            'Camera credentials may need to be entered again.')
+        root.destroy()
+        sys.exit(1)
+    root.title("Camera Viewer - v0.2.12")
+    root.geometry("470x390")
+    app = CameraViewer(root)
+    root.mainloop()
