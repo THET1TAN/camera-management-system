@@ -1,8 +1,9 @@
 # Session restoration — v0.2.11 / issue #18
 
-Session restoration is included in the v0.2.11 main application and its preserved
-source snapshot. Previous snapshots, camera IDs, credentials and encryption keys
-are unchanged. Only public sources and documentation are published.
+Introduced in v0.2.11 and included in the current v0.2.12 application. The new
+release also migrates credentials and saved layout into the local Windows
+profile; see [credential protection](windows-credentials.md). Camera IDs and
+session behavior are preserved. Earlier source snapshots remain unchanged.
 
 ## Start and qualify
 
@@ -13,7 +14,7 @@ Close earlier Viewer windows first. From the application folder, in PowerShell:
 ```
 
 The launcher uses the existing Python 3.9 installation and dependencies. The
-Viewer title displays `v0.2.11`. The former issue-18 launcher opens this same main
+Viewer title displays `v0.2.12`. The former issue-18 launcher opens this same main
 application. Alternatively:
 
 ```powershell
@@ -44,7 +45,10 @@ application. Alternatively:
 
 ## Persistence and lifecycle
 
-`camera_window_positions.db` retains its old schema and gains separate
+In v0.2.12, the active database is
+`%LOCALAPPDATA%\CameraManagementSystem\camera_window_positions.db`; the existing
+layout/session database is copied during migration. `camera_window_positions.db`
+retains its old schema and gains separate
 `viewer_session`, `session_windows` and `window_audio` tables. Session records
 contain only camera database IDs, opaque window IDs, video/PTZ kinds, instance
 slots and mute flags. Geometry remains in the existing position/size tables.

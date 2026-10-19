@@ -1,0 +1,64 @@
+Camera Management System — v0.2.12
+Date: October 18, 2026
+Windows user-bound credentials; Restore All retained
+
+Changes
+-------
+- Camera address, username and password are re-encrypted using a new random
+  Fernet key. Windows DPAPI protects the key for the current user; the key is
+  never stored in plaintext or embedded in the current application sources.
+- Existing credentials are validated, backed up in a DPAPI-protected local file,
+  re-encrypted, published and reopened before the old source database and raw
+  key are retired. Interrupted and concurrent migrations are handled without
+  silently replacing an existing key or merging unrelated stores.
+- Failed decryption is rejected. Corrupted ciphertext is never interpreted as
+  plaintext or automatically re-encrypted. Portable environment keys are disabled.
+- Viewer and Manager launch video and PTZ windows with --camera-id ID only.
+  Children read credentials locally. Legacy password-bearing arguments are
+  rejected without echoing their values; inherited credential variables are removed.
+- Credentials, settings, layout/session data and new diagnostics use
+  %LOCALAPPDATA%\CameraManagementSystem with private user/SYSTEM permissions.
+- Existing encrypted archive metadata remains readable using a separately
+  DPAPI-protected legacy key; new archive metadata uses the new credential key.
+- Restore All from v0.2.11 remains included: restore video/PTZ instances and their
+  layouts, preserve mute settings, reuse open windows and retain session membership
+  during global Viewer shutdown. PTZ restoration issues no movement or preset command.
+- Windows export destinations are resolved before checking that they are outside
+  the evictable cache. Test context cleanup remains compatible with Python 3.9.
+
+Distribution and upgrade
+------------------------
+The root sources are the main application; the matching source snapshot is
+~v0.2.12. Older snapshots remain unchanged. Close older application windows before
+upgrading, then launch Lancer-Camera.cmd using the existing dependencies.
+The Viewer title, launch output, VERSION and README identify v0.2.12. PTZ retains
+its independent v0.2.7 r9 B behavior identifier. No rebuilt executable or installer
+is included. Private databases, raw/protected keys, local settings, logs and media
+are excluded from publication and the source snapshot.
+
+Validation
+----------
+465 tests passed on Windows / Python 3.9.13 in 148.582 seconds for the security
+implementation, including existing session, player, PTZ, availability and offline
+archive coverage. Real DPAPI round trips, altered blobs, key rotation, safe failure,
+interrupted/concurrent migration, legacy-cache compatibility and private launch
+commands are covered with generated keys and temporary databases.
+The existing local installation was migrated without exposing credentials; its
+Viewer and previously open live video windows were restored and resumed playback.
+The matching ~v0.2.12 publication snapshot independently passed all 465 tests on
+Windows / Python 3.9.13 in 147.389 seconds.
+
+Security and qualification limits
+---------------------------------
+Updates under the same Windows profile preserve access. A new PC/profile normally
+requires camera credentials to be entered again. DPAPI is not a hardware binding:
+enterprise roaming/recovery can provide exceptions. Code controlling the authorized
+Windows account or process can still obtain usable credentials.
+Old backups, earlier sources and OneDrive history may retain the legacy key and
+old credentials; migration cannot revoke those copies. Rotate camera passwords if
+they were exposed. The cameras' passwords and network transport are unchanged.
+Physical audio, monitor hotplug, universal camera compatibility and packaged-EXE
+operation still require qualification. Existing Recordings limitations, including
+the CGI archive-boundary jump and physical scrubbing cadence, remain under issue #15.
+
+Guides: docs/windows-credentials.md and docs/session-restore.md.

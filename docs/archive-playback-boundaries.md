@@ -116,8 +116,8 @@ d'une discontinuité dans une playlist ne suffit pas à valider sa lecture réel
 PowerShell, uniquement quand disponible :
 
 ```powershell
-Set-Location 'C:\Users\thetitan.TITANDARK\OneDrive\Documents\Informatique\Projet\Camera'
-$Python = 'C:\Users\thetitan.TITANDARK\AppData\Local\Programs\Python\Python39\python.exe'
+# Ouvrir PowerShell dans le dossier Camera du projet.
+$Python = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python39\python.exe'
 & $Python -m unittest discover -s tests -p 'test_playback*.py' -v
 ```
 

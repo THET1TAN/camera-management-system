@@ -34,7 +34,8 @@ class Store(CacheManager):
         # its credentials or an arbitrary drive root as a disposable cache.
         if any(linked(p) for p in (self.root, *self.root.parents)) or self.root.parent == self.root:
             raise PlaybackError('cache-path')
-        if any((self.root/name).exists() for name in ('camera_credentials.db', '.camera_encryption.key', 'playback.json')):
+        if any((self.root/name).exists() for name in ('camera_credentials.db', '.camera_encryption.key',
+                '.camera_encryption.dpapi', '.archive_encryption.dpapi', 'credentials', 'playback.json')):
             raise PlaybackError('cache-path')
         if any(linked(self.root/name) for name in ('owner.lock','index.sqlite3','index.sqlite3-wal','index.sqlite3-shm')):
             raise PlaybackError('cache-path')

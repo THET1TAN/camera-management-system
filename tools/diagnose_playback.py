@@ -48,11 +48,12 @@ def camera_diagnostic(args):
     from dataclasses import replace
     import threading
     from playback.config import load_cameras, load_settings
+    from camera_paths import data_directory
     from playback.model import PlaybackError, day_bounds, iso_utc
     from playback.remote import RemoteBackend
     from playback.diagnostics import safe_fields
-    settings = load_settings(ROOT)
-    cameras, _ = load_cameras(settings, ROOT)
+    settings = load_settings(data_directory())
+    cameras, _ = load_cameras(settings, data_directory())
     camera = next((c for c in cameras if c.camera_id == args.camera), None)
     if camera is None:
         emit({'event': 'error', 'reason': 'camera-id-not-found', 'camera_id': args.camera})

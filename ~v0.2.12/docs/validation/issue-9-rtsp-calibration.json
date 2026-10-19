@@ -1,0 +1,645 @@
+{
+  "scenario": "Windows libVLC / loopback RTSP TCP / H264 + PCMU",
+  "cycles": [
+    {
+      "cycle": 1,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 3,
+      "recovery_seconds": 12.025654200000645,
+      "generation_after": 4,
+      "displayed": 9,
+      "audio": 41
+    },
+    {
+      "cycle": 2,
+      "mode": "silence",
+      "duration": 5.0,
+      "generation_before": 4,
+      "recovery_seconds": 0.8735228999994433,
+      "generation_after": 4,
+      "displayed": 144,
+      "audio": 156
+    },
+    {
+      "cycle": 3,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 4,
+      "recovery_seconds": 15.513767899999948,
+      "generation_after": 5,
+      "displayed": 4,
+      "audio": 29
+    },
+    {
+      "cycle": 4,
+      "mode": "silence",
+      "duration": 30.0,
+      "generation_before": 5,
+      "recovery_seconds": 1.605672699999559,
+      "generation_after": 6,
+      "displayed": 9,
+      "audio": 43
+    },
+    {
+      "cycle": 5,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 6,
+      "recovery_seconds": 22.518596899999466,
+      "generation_after": 7,
+      "displayed": 5,
+      "audio": 29
+    },
+    {
+      "cycle": 6,
+      "mode": "silence",
+      "duration": 5.0,
+      "generation_before": 7,
+      "recovery_seconds": 0.8598106999997981,
+      "generation_after": 7,
+      "displayed": 142,
+      "audio": 141
+    },
+    {
+      "cycle": 7,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 7,
+      "recovery_seconds": 22.516131099999257,
+      "generation_after": 8,
+      "displayed": 5,
+      "audio": 29
+    },
+    {
+      "cycle": 8,
+      "mode": "silence",
+      "duration": 5.0,
+      "generation_before": 8,
+      "recovery_seconds": 0.8893181999992521,
+      "generation_after": 8,
+      "displayed": 142,
+      "audio": 142
+    },
+    {
+      "cycle": 9,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 8,
+      "recovery_seconds": 22.473959799999648,
+      "generation_after": 9,
+      "displayed": 4,
+      "audio": 29
+    },
+    {
+      "cycle": 10,
+      "mode": "silence",
+      "duration": 120.0,
+      "generation_before": 9,
+      "recovery_seconds": 13.567744799998763,
+      "generation_after": 14,
+      "displayed": 5,
+      "audio": 29
+    },
+    {
+      "cycle": 11,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 14,
+      "recovery_seconds": 23.51492860000144,
+      "generation_after": 15,
+      "displayed": 10,
+      "audio": 40
+    },
+    {
+      "cycle": 12,
+      "mode": "silence",
+      "duration": 5.0,
+      "generation_before": 15,
+      "recovery_seconds": 0.948270799999591,
+      "generation_after": 15,
+      "displayed": 142,
+      "audio": 154
+    },
+    {
+      "cycle": 13,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 15,
+      "recovery_seconds": 22.49984630000108,
+      "generation_after": 16,
+      "displayed": 6,
+      "audio": 30
+    },
+    {
+      "cycle": 14,
+      "mode": "silence",
+      "duration": 5.0,
+      "generation_before": 16,
+      "recovery_seconds": 0.8776493000004848,
+      "generation_after": 16,
+      "displayed": 141,
+      "audio": 139
+    },
+    {
+      "cycle": 15,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 16,
+      "recovery_seconds": 22.484216599999854,
+      "generation_after": 17,
+      "displayed": 4,
+      "audio": 29
+    },
+    {
+      "cycle": 16,
+      "mode": "silence",
+      "duration": 5.0,
+      "generation_before": 17,
+      "recovery_seconds": 0.9328728999989835,
+      "generation_after": 17,
+      "displayed": 137,
+      "audio": 139
+    },
+    {
+      "cycle": 17,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 17,
+      "recovery_seconds": 22.535316100000273,
+      "generation_after": 18,
+      "displayed": 6,
+      "audio": 30
+    },
+    {
+      "cycle": 18,
+      "mode": "silence",
+      "duration": 5.0,
+      "generation_before": 18,
+      "recovery_seconds": 0.9680377000004228,
+      "generation_after": 18,
+      "displayed": 139,
+      "audio": 138
+    },
+    {
+      "cycle": 19,
+      "mode": "offline",
+      "duration": 5.0,
+      "generation_before": 18,
+      "recovery_seconds": 22.583874199999627,
+      "generation_after": 19,
+      "displayed": 5,
+      "audio": 31
+    },
+    {
+      "cycle": 20,
+      "mode": "silence",
+      "duration": 5.0,
+      "generation_before": 19,
+      "recovery_seconds": 0.8883823000014672,
+      "generation_after": 19,
+      "displayed": 140,
+      "audio": 139
+    }
+  ],
+  "errors": [],
+  "initial_offline_seconds": 5.0,
+  "initial_recovery_seconds": 1.4076647000001685,
+  "resources": [
+    {
+      "cycle": 0,
+      "tk": {
+        "rss_bytes": 40755200,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 183689216,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 1,
+      "tk": {
+        "rss_bytes": 96514048,
+        "handles": 268
+      },
+      "worker": {
+        "rss_bytes": 183390208,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 2,
+      "tk": {
+        "rss_bytes": 96698368,
+        "handles": 269
+      },
+      "worker": {
+        "rss_bytes": 183353344,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 3,
+      "tk": {
+        "rss_bytes": 96698368,
+        "handles": 269
+      },
+      "worker": {
+        "rss_bytes": 182636544,
+        "handles": 689
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 4,
+      "tk": {
+        "rss_bytes": 46403584,
+        "handles": 269
+      },
+      "worker": {
+        "rss_bytes": 183468032,
+        "handles": 689
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 5,
+      "tk": {
+        "rss_bytes": 46444544,
+        "handles": 269
+      },
+      "worker": {
+        "rss_bytes": 183263232,
+        "handles": 689
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 6,
+      "tk": {
+        "rss_bytes": 46448640,
+        "handles": 269
+      },
+      "worker": {
+        "rss_bytes": 183230464,
+        "handles": 692
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 7,
+      "tk": {
+        "rss_bytes": 96825344,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 184311808,
+        "handles": 692
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 8,
+      "tk": {
+        "rss_bytes": 59613184,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 184045568,
+        "handles": 693
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 9,
+      "tk": {
+        "rss_bytes": 46485504,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 183988224,
+        "handles": 689
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 10,
+      "tk": {
+        "rss_bytes": 46632960,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 184057856,
+        "handles": 689
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 11,
+      "tk": {
+        "rss_bytes": 46657536,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 183832576,
+        "handles": 689
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 12,
+      "tk": {
+        "rss_bytes": 97054720,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 183754752,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 13,
+      "tk": {
+        "rss_bytes": 97067008,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 182931456,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 14,
+      "tk": {
+        "rss_bytes": 46686208,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 182927360,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 15,
+      "tk": {
+        "rss_bytes": 46690304,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 184180736,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 16,
+      "tk": {
+        "rss_bytes": 97071104,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 183664640,
+        "handles": 692
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 17,
+      "tk": {
+        "rss_bytes": 97079296,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 183615488,
+        "handles": 690
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 18,
+      "tk": {
+        "rss_bytes": 46698496,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 183590912,
+        "handles": 692
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 19,
+      "tk": {
+        "rss_bytes": 97079296,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 184410112,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    },
+    {
+      "cycle": 20,
+      "tk": {
+        "rss_bytes": 97202176,
+        "handles": 267
+      },
+      "worker": {
+        "rss_bytes": 183922688,
+        "handles": 691
+      },
+      "python_threads": 10,
+      "rtsp_clients": 1
+    }
+  ],
+  "visual_checks": [
+    {
+      "cycle": 1,
+      "image_changed": true,
+      "color_fraction": 0.9661458333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 2,
+      "image_changed": true,
+      "color_fraction": 0.9913194444444444,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 3,
+      "image_changed": true,
+      "color_fraction": 0.9917534722222222,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 4,
+      "image_changed": true,
+      "color_fraction": 0.9661458333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 5,
+      "image_changed": true,
+      "color_fraction": 0.9830729166666666,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 6,
+      "image_changed": true,
+      "color_fraction": 0.9895833333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 7,
+      "image_changed": true,
+      "color_fraction": 0.9830729166666666,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 8,
+      "image_changed": true,
+      "color_fraction": 0.9895833333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 9,
+      "image_changed": true,
+      "color_fraction": 0.9917534722222222,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 10,
+      "image_changed": true,
+      "color_fraction": 0.9830729166666666,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 11,
+      "image_changed": true,
+      "color_fraction": 0.9735243055555556,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 12,
+      "image_changed": true,
+      "color_fraction": 0.9956597222222222,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 13,
+      "image_changed": true,
+      "color_fraction": 0.9830729166666666,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 14,
+      "image_changed": true,
+      "color_fraction": 0.9895833333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 15,
+      "image_changed": true,
+      "color_fraction": 0.9917534722222222,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 16,
+      "image_changed": true,
+      "color_fraction": 0.9895833333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 17,
+      "image_changed": true,
+      "color_fraction": 0.9917534722222222,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 18,
+      "image_changed": true,
+      "color_fraction": 0.9895833333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 19,
+      "image_changed": true,
+      "color_fraction": 0.9830729166666666,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    },
+    {
+      "cycle": 20,
+      "image_changed": true,
+      "color_fraction": 0.9895833333333334,
+      "surface_mapped": 1,
+      "status_mapped": 0
+    }
+  ],
+  "max_tk_heartbeat_gap_seconds": 0.448316199999681,
+  "witness_generation": 1,
+  "final_snapshot": {
+    "state": "PLAYING",
+    "generation": 19,
+    "attempt": 18,
+    "reason": "",
+    "bitrate": 0.3629463835753731,
+    "width": 320,
+    "height": 180,
+    "received": 344236,
+    "decoded": 133,
+    "displayed": 174,
+    "audio": 213
+  },
+  "supervisor_threads": 2,
+  "status_pipe_threads": 2,
+  "elapsed_seconds": 531.956745200001,
+  "close_seconds": 0.31253470000046946,
+  "workers_reaped": true
+}

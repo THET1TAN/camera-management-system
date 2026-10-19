@@ -66,6 +66,7 @@ def plan_interval(entries, request):
 
 def destination_check(path, cache_root, required, floor):
     path = Path(path)
+    cache_root = Path(cache_root).resolve()
     if any(linked(p) for p in (path, *path.parents)):
         raise PlaybackError('export-path')
     resolved = path.resolve()

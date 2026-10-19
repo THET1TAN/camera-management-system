@@ -173,21 +173,24 @@ class PlayerArgumentParser(argparse.ArgumentParser):
 
 def main():
     parser = PlayerArgumentParser(description='Launch an ONVIF camera video stream.')
-    parser.add_argument('camera_id')
-    parser.add_argument('camera_ip', nargs='?', default='')
-    parser.add_argument('username', nargs='?', default=os.getenv('CAMERA_USERNAME', ''))
-    parser.add_argument('password', nargs='?', default=os.getenv('CAMERA_PASSWORD', ''))
+    parser.add_argument('--camera-id', required=True)
     parser.add_argument('--test-uri', help='Local synthetic RTSP source (loopback only)')
     args = parser.parse_args()
-    if not args.camera_ip and not args.test_uri:
-        parser.error('camera_ip is required for normal camera playback')
+    camera_ip = username = password = ''
     if args.test_uri:
         from urllib.parse import urlsplit
         parts = urlsplit(args.test_uri)
         if parts.hostname not in ('127.0.0.1', '::1', 'localhost') or parts.username is not None:
             parser.error('--test-uri requires an unauthenticated loopback source')
+    else:
+        from camera_credentials import load_camera
+        from windows_security import ProtectionError
+        try:
+            camera_ip, username, password = load_camera(args.camera_id)
+        except (ProtectionError, OSError):
+            parser.error('Camera credentials unavailable for this Windows profile')
     session = SessionWindow.from_environment(args.camera_id, 'video')
-    player = VideoPlayer(args.camera_id, args.camera_ip, args.username, args.password,
+    player = VideoPlayer(args.camera_id, camera_ip, username, password,
                          uri=args.test_uri, session=session)
     parent_lifetime.bind(player.root, player.on_closing)
     player.run()

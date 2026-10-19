@@ -11,6 +11,13 @@ def main():
     parser.add_argument('--date', type=date.fromisoformat, help=TEXT['cli_date'])
     parser.add_argument('--day-only', action='store_true', help=TEXT['cli_day_only'])
     args = parser.parse_args()
+    if not args.fixture_directory:
+        from camera_credentials import application_store
+        from windows_security import ProtectionError
+        try:
+            application_store()
+        except (ProtectionError, OSError):
+            parser.error('Camera credentials unavailable for this Windows profile')
     if args.day_only and args.camera is None:
         parser.error(TEXT['cli_day_requires_camera'])
     from playback.ui import PlaybackWindow

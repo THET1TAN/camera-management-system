@@ -10,8 +10,9 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .model import Camera, PlaybackError
+from camera_paths import data_directory
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = data_directory()
 
 
 @dataclass
@@ -78,24 +79,30 @@ def save_settings(settings, root=ROOT):
 
 
 def load_cameras(settings, root=ROOT):
-    from cryptography.fernet import Fernet
-    from camera_key import load_encryption_key
-    if not os.environ.get('CAMERA_ENCRYPTION_KEY') and not (Path(root)/'.camera_encryption.key').is_file():
-        # Playback and diagnostics only reuse an existing installation key.
-        raise PlaybackError('credentials-unavailable')
-    cipher = Fernet(load_encryption_key(root))
+    from cryptography.fernet import Fernet, MultiFernet
+    from camera_key import ARCHIVE_KEY_FILE, load_encryption_key
+    from windows_security import ProtectionError
+    directory = Path(root) / 'credentials'
+    try:
+        cipher = Fernet(load_encryption_key(directory, create=False))
+        archive_cipher = cipher
+        if (directory / ARCHIVE_KEY_FILE).exists():
+            archive_cipher = MultiFernet([cipher, Fernet(load_encryption_key(
+                directory, create=False, filename=ARCHIVE_KEY_FILE))])
+    except (ProtectionError, OSError):
+        raise PlaybackError('credentials-unavailable') from None
     def decode(value):
         value = value.encode() if isinstance(value, str) else value
         return cipher.decrypt(value).decode('utf-8')
-    path = Path(root) / 'camera_credentials.db'
+    path = directory / 'camera_credentials.db'
     if not path.exists():
-        return (), cipher
+        return (), archive_cipher
     try:
         with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
             rows = db.execute('SELECT id, ip, username, password FROM cameras').fetchall()
         cameras = tuple(Camera(int(row[0]), *(decode(v) for v in row[1:]),
                                **settings.cameras.get(str(row[0]), {})) for row in rows)
-        return cameras, cipher
+        return cameras, archive_cipher
     except Exception:
         raise PlaybackError('credentials-unavailable') from None
 

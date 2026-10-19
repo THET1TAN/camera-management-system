@@ -8,38 +8,32 @@ from camera_health import CameraTarget, load_overrides
 from camera_health_monitor import HealthMonitor
 from child_processes import ChildProcesses, parent_lifetime
 from camera_key import load_encryption_key
+from camera_credentials import application_store, decrypt_field
+from camera_paths import data_directory
+from windows_security import ProtectionError
 from window_positions import reset_positions
 from camera_session import SessionEntry, SessionWorkspace
 
-# Keep the installation key outside the published source files.
-ENCRYPTION_KEY = load_encryption_key(os.path.dirname(__file__))
+DB_FILE = None
+cipher = None
 
-# Database file
-DB_FILE = os.path.join(os.path.dirname(__file__), 'camera_credentials.db')
 
-# Initialize encryption
-cipher = Fernet(ENCRYPTION_KEY)
+def initialize_storage():
+    global DB_FILE, cipher
+    if cipher is None:
+        directory = application_store()
+        cipher = Fernet(load_encryption_key(directory, create=False))
+        DB_FILE = str(directory / 'camera_credentials.db')
 
 def get_current_python():
     """Get the current Python executable path"""
     return sys.executable
 
-def is_encrypted(data):
-    try:
-        cipher.decrypt(data)
-        return True
-    except Exception:
-        return False
-
 def decrypt_data(encrypted_data):
-    try:
-        if is_encrypted(encrypted_data):
-            return cipher.decrypt(encrypted_data).decode()
-        return encrypted_data
-    except Exception:
-        return encrypted_data
+    return decrypt_field(cipher, encrypted_data)
 
 def get_cameras():
+    initialize_storage()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('SELECT id, ip, username, password, ptz FROM cameras')
@@ -52,6 +46,7 @@ def get_cameras():
             ip_data = camera[1].encode() if isinstance(camera[1], str) else camera[1]
             username_data = camera[2].encode() if isinstance(camera[2], str) else camera[2]
             password_data = camera[3].encode() if isinstance(camera[3], str) else camera[3]
+            decrypt_field(cipher, password_data)
             
             decrypted_camera = (
                 camera[0],
@@ -61,9 +56,8 @@ def get_cameras():
                 camera[4]
             )
             decrypted_cameras.append(decrypted_camera)
-        except Exception as e:
-            print(f"Error processing camera {camera[0]}: {e}")
-            continue
+        except Exception:
+            raise ProtectionError('Unable to read camera credentials. No data was changed.') from None
     return decrypted_cameras
 
 class CameraViewer:
@@ -208,7 +202,7 @@ class CameraViewer:
         self._refresh_health_summary()
         if cameras:
             try:
-                overrides = load_overrides(os.path.dirname(__file__))
+                overrides = load_overrides(data_directory())
                 targets = [CameraTarget(c[0], c[1], c[2], cipher.decrypt(c[3]).decode(),
                                         **overrides.get(str(c[0]), {})) for c in cameras]
                 self.health = HealthMonitor(targets)
@@ -314,9 +308,7 @@ class CameraViewer:
         script = 'player_vilkin_hikvision.py' if entry.kind == 'video' else 'ptz_keyboard_control.py'
         try:
             command = [get_current_python(), os.path.join(os.path.dirname(__file__), script)]
-            if entry.kind == 'video':
-                command.append('--')
-            command.extend([str(camera[0]), camera[1], camera[2], cipher.decrypt(camera[3]).decode()])
+            command.extend(['--camera-id', str(camera[0])])
             handle['process'] = self.children.spawn(command, relay_output=entry.kind == 'video',
                                                     env_overrides=environment)
             if handle['process'] is None:
@@ -476,7 +468,17 @@ if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
     root = tk.Tk()
-    root.title("Camera Viewer - v0.2.11")
+    try:
+        initialize_storage()
+    except (ProtectionError, OSError, sqlite3.Error):
+        root.withdraw()
+        messagebox.showerror('Camera Credentials',
+            'Unable to unlock camera credentials for this Windows profile. '
+            'Close other camera applications and check the local data directory. '
+            'Camera credentials may need to be entered again.')
+        root.destroy()
+        sys.exit(1)
+    root.title("Camera Viewer - v0.2.12")
     root.geometry("470x390")
     app = CameraViewer(root)
     root.mainloop()

@@ -74,6 +74,8 @@ class ChildProcesses:
             return None
         self._reap()
         env = os.environ.copy()
+        for secret_name in ('CAMERA_PASSWORD', 'CAMERA_USERNAME', 'CAMERA_ENCRYPTION_KEY'):
+            env.pop(secret_name, None)
         if env_overrides:
             env.update(env_overrides)
         env[PARENT_PIPE_ENV] = '1'

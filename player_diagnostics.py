@@ -4,6 +4,7 @@ from logging.handlers import RotatingFileHandler
 import os
 import re
 from pathlib import Path
+from camera_paths import data_directory
 from queue import Queue, Full
 import sys
 import threading
@@ -45,7 +46,7 @@ class TerminalRelay:
 
 def make_logger(camera_id, directory=None):
     camera_id = safe_camera_id(camera_id)
-    directory = Path(directory or Path(__file__).resolve().parent / 'player-logs')
+    directory = Path(directory or data_directory() / 'player-logs')
     logger = logging.getLogger(f'player.{camera_id}.{os.getpid()}')
     logger.setLevel(logging.INFO)
     logger.propagate = False
@@ -87,7 +88,7 @@ class StackCapture:
         if not 5 <= self.seconds <= 300:
             return
         try:
-            directory = Path(__file__).resolve().parent / 'player-logs'
+            directory = data_directory() / 'player-logs'
             directory.mkdir(exist_ok=True)
             path = directory / f'camera-{safe_camera_id(camera_id)}-{role}-stacks.log'
             self.path = path

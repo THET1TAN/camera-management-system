@@ -128,9 +128,12 @@ class FrameInsetsTests(unittest.TestCase):
         self.user32.GetWindowRect.side_effect = outer
         self.dwmapi.DwmGetWindowAttribute.side_effect = visible
         self.user32.PhysicalToLogicalPointForPerMonitorDPI.side_effect = logical
-        self.enterContext(patch('window_positions.os.name', 'nt'))
-        self.enterContext(patch('window_positions.ctypes.WinDLL', create=True,
-                                side_effect=lambda name, **kw: self.user32 if name == 'user32' else self.dwmapi))
+        # Keep the declared Python 3.9 test runtime supported (enterContext is 3.11+).
+        for item in (patch('window_positions.os.name', 'nt'),
+                     patch('window_positions.ctypes.WinDLL', create=True,
+                           side_effect=lambda name, **kw: self.user32 if name == 'user32' else self.dwmapi)):
+            self.addCleanup(item.stop)
+            item.start()
 
     def test_dwm_physical_coordinates_are_converted_before_measuring_margins(self):
         self.assertEqual(windows_frame_insets(123), (7, 0, 7, 7))
